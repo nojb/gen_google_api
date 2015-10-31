@@ -153,7 +153,7 @@ end
 (*   in *)
 (*   Server.create ~mode:(`TCP (`Port 80)) (Server.make ~callback ()) *)
 
-let () =
+let main () =
   let module A = Auth (struct
 let client_id = "921324454177-4gp2pll42hlasklqq7ug0qh2g55up267.apps.googleusercontent.com"
 let client_secret = "!!SECRET!!"
@@ -178,3 +178,193 @@ end)
     Lwt.return_unit
   in
   Lwt_unix.run t
+
+
+module Parser = struct
+  open Yojson.Basic.Util
+
+  let option_map f = function
+    | None -> None
+    | Some x -> Some (f x)
+
+  type type_ =
+    | Object
+    | String
+    | Integer
+    | Array
+    | Boolean
+
+  let type_of_string id =
+    match id with
+    | "object" -> Object
+    | "string" -> String
+    | "integer" -> Integer
+    | "array" -> Array
+    | "boolean" -> Boolean
+    | _ -> Printf.ksprintf failwith "type_of_string: %s" id
+
+  type annotation =
+    | Required of string list
+
+  let annotation_of_json (id, json) =
+    match id with
+    | "required" ->
+        let selectors = json |> to_list |> List.map to_string in
+        Required selectors
+    | _ ->
+        Printf.ksprintf failwith "annotations_of_json: %s" id
+
+  type items =
+    {
+      ref_ : string option;
+      type_ : type_ option;
+    }
+
+  let item_of_json json =
+    let ref_ = json |> member "$ref" |> to_string_option in
+    let type_ = json |> member "type" |> to_string_option |> option_map type_of_string in
+    {ref_; type_}
+
+  type property =
+    {
+      id : string;
+      type_ : type_ option;
+      description : string option;
+      required : string list;
+      ref_ : string option;
+      enum : string list;
+      enum_descriptions : string list;
+      format : string option;
+      items : items option;
+    }
+
+  let property_of_json (id, json) =
+    let type_ = json |> member "type" |> to_string_option |> option_map type_of_string in
+    let description = json |> member "description" |> to_string_option in
+    let required =
+      [json] |> filter_member "annotations" |> filter_member "required" |> flatten |>
+      filter_string
+    in
+    let ref_ = json |> member "$ref" |> to_string_option in
+    let enum = [json] |> filter_member "enum" |> flatten |> filter_string in
+    let enum_descriptions =
+      [json] |> filter_member "enumDescriptions" |> flatten |> filter_string
+    in
+    let format = json |> member "format" |> to_string_option in
+    let items = json |> member "items" |> to_option item_of_json in
+    {id; type_; description; required; ref_; enum; enum_descriptions; format; items}
+
+  type schema =
+    {
+      id : string;
+      type_ : type_;
+      description : string option;
+      properties : property list;
+    }
+
+  let schema_of_json (_, json) =
+    let id = json |> member "id" |> to_string in
+    let type_ = json |> member "type" |> to_string |> type_of_string in
+    let description = json |> member "description" |> to_string_option in
+    let properties = json |> member "properties" |> to_assoc |> List.map property_of_json in
+    {id; type_; description; properties}
+
+  type scope =
+    {
+      id : string;
+      description : string;
+    }
+
+  let scope_of_json (id, json) =
+    let description = json |> member "description" |> to_string in
+    {id; description}
+
+  type parameter =
+    {
+      id : string;
+      type_ : type_;
+      description : string;
+      default : string option;
+      required : bool;
+      location : string;
+    }
+
+  let parameter_of_json (id, json) =
+    let type_ = json |> member "type" |> to_string |> type_of_string in
+    let description = json |> member "description" |> to_string in
+    let default = json |> member "default" |> to_string_option in
+    let required = json |> member "required" |> to_bool_option in
+    let required = match required with Some b -> b | None -> false in
+    let location = json |> member "location" |> to_string in
+    {id; type_; description; default; required; location}
+
+  type method_ =
+    {
+      name : string;
+      id : string;
+      path : string;
+      http_method : string;
+      description : string option;
+      parameters : parameter list;
+      parameter_order : string list;
+      response : string option;
+      scopes : string list;
+    }
+
+  let method_of_json (name, json) =
+    let id = json |> member "id" |> to_string in
+    let path = json |> member "path" |> to_string in
+    let http_method = json |> member "httpMethod" |> to_string in
+    let description = json |> member "description" |> to_string_option in
+    let parameters =
+      [json] |> filter_member "parameters" |> List.map to_assoc |> List.flatten |>
+      List.map parameter_of_json
+    in
+    let parameter_order = [json] |> filter_member "parameterOrder" |> flatten |> filter_string in
+    let response = None in
+    let scopes = [json] |> filter_member "scopes" |> flatten |> filter_string in
+    {id; name; path; http_method; description; parameters; parameter_order;
+     response; scopes}
+
+  type resource =
+    {
+      id : string;
+      methods : method_ list;
+      resources : resource list;
+    }
+
+  let rec resource_of_json (id, json) =
+    let methods =
+      [json] |> filter_member "methods" |> List.map to_assoc |> List.flatten |>
+      List.map method_of_json
+    in
+    let resources =
+      [json] |> filter_member "resources" |> List.map to_assoc |> List.flatten |>
+      List.map resource_of_json
+    in
+    {id; methods; resources}
+
+  type api =
+    {
+      name : string;
+      version : string;
+      base_url : string;
+      scopes : scope list;
+      schemas : schema list;
+      resources : resource list;
+    }
+
+  let parse path =
+    let json = Yojson.Basic.from_file path in
+    let name = json |> member "name" |> to_string in
+    let version = json |> member "version" |> to_string in
+    let base_url = json |> member "baseUrl" |> to_string in
+    let scopes =
+      json |> member "auth" |> member "oauth2" |> member "scopes" |> to_assoc |>
+      List.map scope_of_json
+    in
+    let schemas = if false then json |> member "schemas" |> to_assoc |> List.map schema_of_json else [] in
+    let resources = json |> member "resources" |> to_assoc |> List.map resource_of_json in
+    {name; version; base_url; scopes; schemas; resources}
+
+end
