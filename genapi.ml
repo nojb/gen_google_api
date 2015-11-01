@@ -238,10 +238,10 @@ module Emit = struct
     match parameter.type_, s with
     | String, _ ->
         begin match parameter.enum with
-          | [] ->
-              fprintf oc "%S" s
-          | _ :: _ ->
-              fprintf oc "`%s" (String.capitalize (pretty s))
+        | [] ->
+            fprintf oc "%S" s
+        | _ :: _ ->
+            fprintf oc "`%s" (String.capitalize (pretty s))
         end
     | Boolean, ("true" | "false") -> fprintf oc "%s" s
     | Integer, _ -> fprintf oc "%d" (int_of_string s)
@@ -274,18 +274,18 @@ module Emit = struct
         fprintf oc ") (List.tl %s);\nend;\n" id
     | false ->
         begin match parameter.required, parameter.default, parameter.type_ with
-          | true, _, String | false, Some _, String ->
-              fprintf oc "Printf.bprintf %s \"%c%s=%%a\" urlencode %s;\n"
-                url first parameter.id id
-          | true, _, Integer | false, Some _, Integer ->
-              fprintf oc "Printf.bprintf %s \"%c%s=%%d\" %s;\n" url first parameter.id id
-          | true, _, Boolean | false, Some _, Boolean ->
-              fprintf oc "Printf.bprintf %s \"%c%s=%%b\" %s;\n" url first parameter.id id
-          | false, None, _ ->
-              fprintf oc "(match %s with None -> () | Some x ->\n%a);\n"
-                id (emit_query_parameter first url "x") {parameter with required = true}
-          | _ ->
-              failwith "emit_query_parameter: unsupported type"
+        | true, _, String | false, Some _, String ->
+            fprintf oc "Printf.bprintf %s \"%c%s=%%a\" urlencode %s;\n"
+              url first parameter.id id
+        | true, _, Integer | false, Some _, Integer ->
+            fprintf oc "Printf.bprintf %s \"%c%s=%%d\" %s;\n" url first parameter.id id
+        | true, _, Boolean | false, Some _, Boolean ->
+            fprintf oc "Printf.bprintf %s \"%c%s=%%b\" %s;\n" url first parameter.id id
+        | false, None, _ ->
+            fprintf oc "(match %s with None -> () | Some x ->\n%a);\n"
+              id (emit_query_parameter first url "x") {parameter with required = true}
+        | _ ->
+            failwith "emit_query_parameter: unsupported type"
         end
 
   let emit_query_parameters url oc parameters =
@@ -401,14 +401,14 @@ module Emit = struct
         fprintf oc "int"
     | Some String ->
         begin match schema.enum with
-          | [] ->
-              fprintf oc "string"
-          | _ :: _ ->
-              fprintf oc "[\n";
-              List.iter (fun s ->
-                  fprintf oc "| `%s\n" (String.capitalize (pretty s))
-                ) schema.enum;
-              fprintf oc "]"
+        | [] ->
+            fprintf oc "string"
+        | _ :: _ ->
+            fprintf oc "[\n";
+            List.iter (fun s ->
+                fprintf oc "| `%s\n" (String.capitalize (pretty s))
+              ) schema.enum;
+            fprintf oc "]"
         end
     | Some Boolean ->
         fprintf oc "bool"
@@ -465,15 +465,15 @@ module Emit = struct
         fprintf oc "%s |> to_int_option\n" json
     | Some String ->
         begin match schema.enum with
-          | [] ->
-              fprintf oc "%s |> to_string_option\n" json
-          | _ :: _ ->
-              fprintf oc "match %s |> to_string_option with\n" json;
-              List.iter (fun s ->
-                  fprintf oc "| Some %S -> Some `%s\n" s (String.capitalize (pretty s))
-                ) schema.enum;
-              fprintf oc "| None -> None\n";
-              fprintf oc "| Some s -> invalid_arg (%S ^ s)\n" "unrecognized enum: "
+        | [] ->
+            fprintf oc "%s |> to_string_option\n" json
+        | _ :: _ ->
+            fprintf oc "match %s |> to_string_option with\n" json;
+            List.iter (fun s ->
+                fprintf oc "| Some %S -> Some `%s\n" s (String.capitalize (pretty s))
+              ) schema.enum;
+            fprintf oc "| None -> None\n";
+            fprintf oc "| Some s -> invalid_arg (%S ^ s)\n" "unrecognized enum: "
         end
     | Some Boolean ->
         fprintf oc "%s |> to_bool_option\n" json
