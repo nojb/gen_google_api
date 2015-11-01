@@ -111,6 +111,8 @@ module Parser = struct
       description : string;
       default : string option;
       required : bool;
+      enum : string list;
+      enum_descriptions : string list;
       repeated : bool;
       location : string;
     }
@@ -121,10 +123,14 @@ module Parser = struct
     let default = json |> member "default" |> to_string_option in
     let required = json |> member "required" |> to_bool_option in
     let required = match required with Some b -> b | None -> false in
+    let enum = [json] |> filter_member "enum" |> flatten |> filter_string in
+    let enum_descriptions =
+      [json] |> filter_member "enumDescriptions" |> flatten |> filter_string
+    in
     let repeated = json |> member "repeated" |> to_bool_option in
     let repeated = match repeated with Some b -> b | None -> false in
     let location = json |> member "location" |> to_string in
-    {id; type_; description; default; required; repeated; location}
+    {id; type_; description; default; required; enum; enum_descriptions; repeated; location}
 
   type method_ =
     {
@@ -228,9 +234,15 @@ module Emit = struct
     | [] -> ()
     | x :: xs -> f oc x; List.iter (fun x -> fprintf oc "%s%a" sep f x) xs
 
-  let emit_value type_ oc s =
-    match type_, s with
-    | String, _ -> fprintf oc "%S" s
+  let emit_value parameter oc s =
+    match parameter.type_, s with
+    | String, _ ->
+        begin match parameter.enum with
+          | [] ->
+              fprintf oc "%S" s
+          | _ :: _ ->
+              fprintf oc "`%s" (String.capitalize (pretty s))
+        end
     | Boolean, ("true" | "false") -> fprintf oc "%s" s
     | Integer, _ -> fprintf oc "%d" (int_of_string s)
     | _ -> ksprintf failwith "emit_value: not supported (%S)" s
@@ -246,7 +258,7 @@ module Emit = struct
     | {required = true; default = None; _} ->
         fprintf oc "~%s" (pretty parameter.id)
     | {default = Some s; repeated = false; _} ->
-        fprintf oc "?(%s = %a)" (pretty parameter.id) (emit_value parameter.type_) s
+        fprintf oc "?(%s = %a)" (pretty parameter.id) (emit_value parameter) s
 
   let emit_parameters oc parameters =
     emit_separated " " emit_parameter oc parameters
