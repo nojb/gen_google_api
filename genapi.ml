@@ -555,12 +555,12 @@ module Emit = struct
     | _ -> failwith "simple_type: not a simple type"
 
   let rec emit_schema_property oc (id, schema) =
-    fprintf oc "%s : %a option;\n" (pretty id) emit_schema schema
+    fprintf oc "%s : %a option;\n" (pretty id) emit_schema_type schema
 
   and emit_schema_properties oc properties =
     List.iter (emit_schema_property oc) properties
 
-  and emit_schema oc (schema : schema) =
+  and emit_schema_type oc (schema : schema) =
     let id = match schema.id with None -> "" | Some id -> id in
     match schema.type_ with
     | Some Integer ->
@@ -579,7 +579,7 @@ module Emit = struct
         in
         let s =
           match items.ref_, items.type_ with
-          | Some x, None -> pretty x
+          | Some x, None -> sprintf "%s.t" x
           | None, Some x -> simple_type x
           | _ -> ksprintf failwith "emit_schema: malformed items (%S)" id
         in
@@ -593,22 +593,60 @@ module Emit = struct
           | None ->
               ksprintf failwith "emit_schema: type_ = None && ref_ = None (%S)" id
         in
-        fprintf oc "%s" (pretty x)
+        fprintf oc "%s.t" x
 
   let emit_schema_getter schema_id oc (id, _) =
     fprintf oc
       "let get_%s (x : t) = match x.%s with Some x -> x | None -> invalid_arg %S\n"
       (pretty id) (pretty id) (sprintf "%s.%s" schema_id id)
 
-  let emit_schema_getters schema_id oc (schema : schema) =
-    List.iter (emit_schema_getter schema_id oc) schema.properties
+  let emit_schema_getter_sig oc (id, schema) =
+    fprintf oc "val get_%s : t -> %a\n" (pretty id) emit_schema_type schema
 
-  let emit_schema_module oc (id, (schema : schema)) =
+  let emit_schema_constructor_sig oc (schema : schema) =
+    let aux oc (id, schema) = fprintf oc " ?%s:%a ->\n" (pretty id) emit_schema_type schema in
+    fprintf oc "val create :\n";
+    fprintf oc "%a unit -> t\n" (fun oc l -> List.iter (aux oc) l) schema.properties
+
+  let emit_schema_constructor oc (schema : schema) =
+    let aux oc (id, _) = fprintf oc " ?%s" (pretty id) in
+    fprintf oc "let create %a () =\n" (fun oc l -> List.iter (aux oc) l) schema.properties;
+    fprintf oc "{\n";
+    List.iter (fun (id, _) -> fprintf oc "%s;\n" (pretty id)) schema.properties;
+    fprintf oc "}\n"
+
+  let emit_schema_of_json oc (schema : schema) =
+    match schema.type_ with
+    | Some Integer ->
+        fprintf oc "json |> to_int_option\n"
+    | Some String ->
+        fprintf oc "json |> to_string_option\n"
+    | Some Boolean ->
+        fprintf oc "json |> to_bool_option\n"
+    | _ ->
+        fprintf oc "XXX\n"
+
+  let emit_schema_module first oc (id, (schema : schema)) =
     match schema.type_ with
     | Some Object ->
-        fprintf oc "module %s = struct\n" (String.capitalize (pretty id));
-        fprintf oc "type t = %s\n" (pretty id);
-        emit_schema_getters id oc schema;
+        fprintf oc "%s %s : sig\n" first id;
+        fprintf oc "type t\n";
+        emit_schema_constructor_sig oc schema;
+        List.iter (emit_schema_getter_sig oc) schema.properties;
+        fprintf oc "val of_json: Yojson.Basic.json -> t\n";
+        fprintf oc "end = struct\n";
+        fprintf oc "type t =\n";
+        emit_schema_type oc schema;
+        emit_schema_constructor oc schema;
+        List.iter (emit_schema_getter id oc) schema.properties;
+        fprintf oc "open Yojson.Basic.Util\n";
+        fprintf oc "let of_json json =\n";
+        List.iter (fun (id, schema) ->
+            fprintf oc "let %s =\n%ain\n" (pretty id) emit_schema_of_json schema
+          ) schema.properties;
+        fprintf oc "{\n";
+        List.iter (fun (id, _) -> fprintf oc "%s;\n" (pretty id)) schema.properties;
+        fprintf oc "}\n";
         fprintf oc "end\n"
     | Some _ | None ->
         ()
@@ -616,12 +654,12 @@ module Emit = struct
   let emit_schemas oc schemas =
     let aux = function
       | [] -> ()
-      | (id, x) :: xs ->
-          fprintf oc "type %s =\n%a" (pretty id) emit_schema x;
-          List.iter (fun (id, x) -> fprintf oc "and %s =\n%a" (pretty id) emit_schema x) xs
+      | x :: xs ->
+          emit_schema_module "module rec" oc x;
+          List.iter (fun x -> emit_schema_module "and" oc x) xs
     in
-    aux schemas;
-    List.iter (emit_schema_module oc) schemas
+    aux schemas
+    (* List.iter (emit_schema_module oc) schemas *)
 
   let emit oc api =
     fprintf oc "%s\n" prologue;
