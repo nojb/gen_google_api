@@ -368,3 +368,56 @@ module Parser = struct
     {name; version; base_url; scopes; schemas; resources}
 
 end
+
+module Emit = struct
+  open Printf
+  open Parser
+
+  let pretty s =
+    let b = Buffer.create 0 in
+    for i = 0 to String.length s - 1 do
+      match s.[i] with
+      | 'A' .. 'Z' as c -> Buffer.add_char b '_'; Buffer.add_char b (Char.lowercase c)
+      | c -> Buffer.add_char b c
+    done;
+    Buffer.contents b
+
+  let emit_separated f oc l =
+    match l with
+    | [] -> ()
+    | x :: xs -> f oc x; List.iter (fun x -> fprintf oc " %a" f x) xs
+
+  let emit_parameter oc parameter =
+    match parameter.required, parameter.default with
+    | false, None ->
+        fprintf oc "?%s" (pretty parameter.id)
+    | true, None ->
+        fprintf oc "~%s" (pretty parameter.id)
+    | _, Some s ->
+        fprintf oc "?(%s = %S)" (pretty parameter.id) s
+
+  let emit_parameters oc parameters =
+    emit_separated emit_parameter oc parameters
+
+  let emit_method oc (method_ : method_) =
+    fprintf oc "let %s %a =\n" (pretty method_.name) emit_parameters method_.parameters;
+    fprintf oc "assert false\n"
+
+  let emit_methods oc methods =
+    List.iter (emit_method oc) methods
+
+  let rec emit_resource oc resource =
+    fprintf oc "module %s = struct\n" (String.capitalize (pretty resource.id));
+    emit_methods oc resource.methods;
+    emit_resources oc resource.resources;
+    fprintf oc "end\n"
+
+  and emit_resources oc resources =
+    List.iter (emit_resource oc) resources
+
+  let emit oc api =
+    fprintf oc "%a%!" emit_resources api.resources
+end
+
+let () =
+  Parser.parse "gmail.json" |> Emit.emit stdout
