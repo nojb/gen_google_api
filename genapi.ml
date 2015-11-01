@@ -595,6 +595,24 @@ module Emit = struct
         in
         fprintf oc "%s" (pretty x)
 
+  let emit_schema_getter schema_id oc (id, _) =
+    fprintf oc
+      "let get_%s (x : t) = match x.%s with Some x -> x | None -> invalid_arg %S\n"
+      (pretty id) (pretty id) (sprintf "%s.%s" schema_id id)
+
+  let emit_schema_getters schema_id oc (schema : schema) =
+    List.iter (emit_schema_getter schema_id oc) schema.properties
+
+  let emit_schema_module oc (id, (schema : schema)) =
+    match schema.type_ with
+    | Some Object ->
+        fprintf oc "module %s = struct\n" (String.capitalize (pretty id));
+        fprintf oc "type t = %s\n" (pretty id);
+        emit_schema_getters id oc schema;
+        fprintf oc "end\n"
+    | Some _ | None ->
+        ()
+
   let emit_schemas oc schemas =
     let aux = function
       | [] -> ()
@@ -602,8 +620,8 @@ module Emit = struct
           fprintf oc "type %s =\n%a" (pretty id) emit_schema x;
           List.iter (fun (id, x) -> fprintf oc "and %s =\n%a" (pretty id) emit_schema x) xs
     in
-    aux schemas
-    (* List.iter (emit_schema oc) schemas *)
+    aux schemas;
+    List.iter (emit_schema_module oc) schemas
 
   let emit oc api =
     fprintf oc "%s\n" prologue;
