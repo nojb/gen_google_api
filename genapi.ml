@@ -1,28 +1,3 @@
-(* module type HTTP_CLIENT = sig *)
-(*   type 'a io *)
-
-(*   val get : string -> string io *)
-(* end *)
-
-(* module type IO = sig *)
-(*   type 'a t *)
-(*   val bind : 'a t -> ('a -> 'b t) -> 'b t *)
-(*   val return : 'a -> 'a t *)
-(* end *)
-
-let urlencode s =
-  let b = Buffer.create 0 in
-  for i = 0 to String.length s - 1 do
-    match s.[i] with
-    | ' ' -> Buffer.add_string b "%20"
-    | '!' -> Buffer.add_string b "%21"
-    | '"' -> Buffer.add_string b "%22"
-    | '.' -> Buffer.add_string b "%2E"
-    | '/' -> Buffer.add_string b "%2F"
-    | ':' -> Buffer.add_string b "%3A"
-    | c -> Buffer.add_char b c
-  done;
-  Buffer.contents b
 
 let prologue = "
 let urlencode b s =
@@ -37,69 +12,6 @@ let urlencode b s =
     | c -> Buffer.add_char b c
   done
 "
-
-module Auth (C : sig val client_id : string val client_secret : string end) :
-sig
-  val request_token : string list -> string Lwt.t
-end = struct
-  let redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-
-  let request_token scopes =
-    let url =
-      Printf.sprintf "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=%s&redirect_uri=%s&scope=%s"
-        C.client_id redirect_uri (urlencode (String.concat " " scopes))
-    in
-    ignore (Printf.ksprintf Sys.command "open %S" url);
-    Printf.printf "\nEnter access code: ";
-    let code = read_line () in
-    let url = "https://www.googleapis.com/oauth2/v3/token" in
-    let body =
-      Printf.sprintf
-        "code=%s&\
-         client_id=%s&\
-         client_secret=%s&\
-         redirect_uri=%s&\
-         grant_type=authorization_code"
-        code C.client_id C.client_secret redirect_uri
-    in
-    let headers = Cohttp.Header.init_with "Content-Type" "application/x-www-form-urlencoded" in
-    let open Lwt.Infix in
-    Cohttp_lwt_unix.Client.post (Uri.of_string url) ~headers ~body:(Cohttp_lwt_body.of_string body) >>= fun (_, body) ->
-    Cohttp_lwt_body.to_string body >>= fun json ->
-    let open Yojson.Basic.Util in
-    let access_token = json |> Yojson.Basic.from_string |> member "access_token" |> to_string in
-    Lwt.return access_token
-end
-
-(* open Lwt *)
-(* open Cohttp *)
-(* open Cohttp_lwt_unix *)
-
-(* let main () = *)
-(*   let module A = Auth (struct *)
-(* let client_id = "921324454177-4gp2pll42hlasklqq7ug0qh2g55up267.apps.googleusercontent.com" *)
-(* let client_secret = "!!SECRET!!" *)
-(* end) *)
-(*   in *)
-(*   let open Lwt.Infix in *)
-(*   let t = *)
-(*     A.request_token ["https://mail.google.com"] >>= fun token -> *)
-(*     Printf.printf "TOKEN: %s\n%!" token; *)
-(*     let module Client = *)
-(*     struct *)
-(*       module C = Cohttp_lwt_unix.Client *)
-(*       let get url = *)
-(*         C.get (Uri.of_string url) >>= fun (_, body) -> Cohttp_lwt_body.to_string body *)
-(*     end *)
-(*     in *)
-(*     (\* let t = Client.get auth >>= fun _ -> Lwt.return_unit in *\) *)
-(*     let module V1 = V1 (struct let token = token end) (Lwt) (Client) in *)
-(*     let users = new V1.users in *)
-(*     users # labels # list () >>= fun labels -> *)
-(*     List.iter (fun label -> match label # name with Some label -> Printf.eprintf "LABEL: %s\n%!" label | None -> ()) (labels # labels); *)
-(*     Lwt.return_unit *)
-(*   in *)
-(*   Lwt_unix.run t *)
 
 module Parser = struct
   open Yojson.Basic.Util
@@ -350,12 +262,12 @@ module Emit = struct
         fprintf oc ") (List.tl %s);\nend;\n" id
     | false ->
         begin match parameter.required, parameter.default, parameter.type_ with
-          | true, _, String | false, Some _, String | false, None, String ->
+          | true, _, String | false, Some _, String ->
               fprintf oc "Printf.bprintf %s \"%c%s=%%a\" urlencode %s;\n"
                 url first parameter.id id
-          | true, _, Integer | false, Some _, Integer | false, None, Integer ->
+          | true, _, Integer | false, Some _, Integer ->
               fprintf oc "Printf.bprintf %s \"%c%s=%%d\" %s;\n" url first parameter.id id
-          | true, _, Boolean | false, Some _, Boolean | false, None, Boolean ->
+          | true, _, Boolean | false, Some _, Boolean ->
               fprintf oc "Printf.bprintf %s \"%c%s=%%b\" %s;\n" url first parameter.id id
           | false, None, _ ->
               fprintf oc "(match %s with None -> () | Some x ->\n%a);\n"
@@ -365,10 +277,10 @@ module Emit = struct
         end
 
   let emit_query_parameters url oc parameters =
+    fprintf oc "Printf.bprintf %s \"?access_token=%%s\" token;\n" url;
     match parameters with
     | [] -> ()
     | (x : parameter) :: xs ->
-        fprintf oc "Printf.bprintf %s \"?access_token=%%s\" token;\n" url;
         emit_query_parameter '&' url (pretty x.id) oc x;
         List.iter
           (fun (x : parameter) ->
@@ -435,14 +347,16 @@ module Emit = struct
     emit_path_parameters method_.path "url" oc path_parameters;
     emit_query_parameters "url" oc query_parameters;
     fprintf oc "let url = Buffer.contents url in\n";
-    fprintf oc "IO.bind (Http.%s url) (fun body ->\n" (http_method method_);
+    fprintf oc "let open Lwt.Infix in\n";
+    fprintf oc "Http.%s (Uri.of_string url) >>= fun (_, body) ->\n" (http_method method_);
     match method_.response with
     | None ->
-        fprintf oc "IO.return ()\n)\n"
+        fprintf oc "Lwt.return_unit\n"
     | Some x ->
-        fprintf oc "let json = Yojson.Basic.of_string body in\n";
-        fprintf oc "let response = %s.of_json json in\n" (String.capitalize (pretty x));
-        fprintf oc "IO.return response\n)\n"
+        fprintf oc "Cohttp_lwt_body.to_string body >>= fun body ->\n";
+        fprintf oc "let json = Yojson.Basic.from_string body in\n";
+        fprintf oc "let response = %s.of_json json in\n" x;
+        fprintf oc "Lwt.return response\n"
 
   let emit_methods base_url oc methods =
     List.iter (emit_method base_url oc) methods
@@ -514,7 +428,7 @@ module Emit = struct
 
   let emit_schema_getter schema_id oc (id, _) =
     fprintf oc
-      "let get_%s (x : t) = match x.%s with Some x -> x | None -> invalid_arg %S\n"
+      "let get_%s (x : t) =\nmatch x.%s with Some x -> x | None -> invalid_arg %S\n"
       (pretty id) (pretty id) (sprintf "%s.%s" schema_id id)
 
   let emit_schema_getter_sig oc (id, schema) =
@@ -532,17 +446,17 @@ module Emit = struct
     List.iter (fun (id, _) -> fprintf oc "%s;\n" (pretty id)) schema.properties;
     fprintf oc "}\n"
 
-  let emit_schema_of_json oc (schema : schema) =
+  let emit_schema_of_json json oc (schema : schema) =
     let id = match schema.id with None -> "" | Some id -> id in
     match schema.type_ with
     | Some Integer ->
-        fprintf oc "json |> to_int_option\n"
+        fprintf oc "%s |> to_int_option\n" json
     | Some String ->
         begin match schema.enum with
           | [] ->
-              fprintf oc "json |> to_string_option\n"
+              fprintf oc "%s |> to_string_option\n" json
           | _ :: _ ->
-              fprintf oc "match json |> to_string_option with\n";
+              fprintf oc "match %s |> to_string_option with\n" json;
               List.iter (fun s ->
                   fprintf oc "| Some %S -> Some `%s\n" s (String.capitalize (pretty s))
                 ) schema.enum;
@@ -550,7 +464,7 @@ module Emit = struct
               fprintf oc "| Some s -> invalid_arg (%S ^ s)\n" "unrecognized enum: "
         end
     | Some Boolean ->
-        fprintf oc "json |> to_bool_option\n"
+        fprintf oc "%s |> to_bool_option\n" json
     | Some Array ->
         let items =
           match schema.items with
@@ -565,7 +479,7 @@ module Emit = struct
           | None, Some x -> sprintf "to_%s" (simple_type x)
           | _ -> ksprintf failwith "emit_schema: malformed items (%S)" id
         in
-        fprintf oc "let json = json |> to_option to_list in\n";
+        fprintf oc "let json = %s |> to_option to_list in\n" json;
         fprintf oc "match json with None -> None | Some l -> Some (List.map %s l)\n" s
     | Some Object ->
         failwith "emit_schema_of_json: 'object' unsupported"
@@ -576,7 +490,7 @@ module Emit = struct
           | None ->
               ksprintf failwith "emit_schema: type_ = None && ref_ = None (%S)" id
         in
-        fprintf oc "%s.of_json json\n" x
+        fprintf oc "%s |> to_option %s.of_json\n" json x
 
   let emit_schema_module first oc (id, (schema : schema)) =
     match schema.type_ with
@@ -594,7 +508,8 @@ module Emit = struct
         fprintf oc "open Yojson.Basic.Util\n";
         fprintf oc "let of_json json =\n";
         List.iter (fun (id, schema) ->
-            fprintf oc "let %s =\n%ain\n" (pretty id) emit_schema_of_json schema
+            fprintf oc "let %s =\nlet json = json |> member %S in\n%ain\n"
+              (pretty id) id (emit_schema_of_json "json") schema
           ) schema.properties;
         fprintf oc "{\n";
         List.iter (fun (id, _) -> fprintf oc "%s;\n" (pretty id)) schema.properties;
@@ -614,11 +529,10 @@ module Emit = struct
 
   let emit oc api =
     fprintf oc "%s\n" prologue;
-    fprintf oc "module %s = struct\n" (String.capitalize (pretty api.name));
-    fprintf oc "module %s = struct\n" (String.capitalize (pretty api.version));
+    fprintf oc "module %s (Http : Cohttp_lwt.Client) = struct\n"
+      (String.capitalize (pretty api.version));
     emit_schemas oc api.schemas;
     emit_resources api.base_url oc api.resources;
-    fprintf oc "end\n";
     fprintf oc "end\n";
     flush oc
 end
