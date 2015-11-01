@@ -398,16 +398,16 @@ module Emit = struct
     | _ -> Printf.ksprintf failwith "emit_value: not supported (%S)" s
 
   let emit_parameter oc parameter =
-    match parameter.required, parameter.default, parameter.repeated with
-    | false, None, true ->
+    match parameter with
+    | {required = false; default = None; repeated = true; _} ->
         fprintf oc "?(%s = [])" (pretty parameter.id)
-    | _, Some _, true ->
+    | {default = Some _; repeated = true; _} ->
         failwith "emit_parameter: repeated parameter with supported characteristics"
-    | false, None, false ->
+    | {required = false; default = None; repeated = false; _} ->
         fprintf oc "?%s" (pretty parameter.id)
-    | true, None, _ ->
+    | {required = true; default = None; _} ->
         fprintf oc "~%s" (pretty parameter.id)
-    | _, Some s, false ->
+    | {default = Some s; repeated = false; _} ->
         fprintf oc "?(%s = %a)" (pretty parameter.id) (emit_value parameter.type_) s
 
   let emit_parameters oc parameters =
