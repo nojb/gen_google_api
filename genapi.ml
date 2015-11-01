@@ -110,6 +110,20 @@ let urlencode s =
   done;
   Buffer.contents b
 
+let prologue = "
+let urlencode b s =
+  for i = 0 to String.length s - 1 do
+    match s.[i] with
+    | ' ' -> Buffer.add_string b \"%20\"
+    | '!' -> Buffer.add_string b \"%21\"
+    | '\"' -> Buffer.add_string b \"%22\"
+    | '.' -> Buffer.add_string b \"%2E\"
+    | '/' -> Buffer.add_string b \"%2F\"
+    | ':' -> Buffer.add_string b \"%3A\"
+    | c -> Buffer.add_char b c
+  done
+"
+
 module Auth (C : sig val client_id : string val client_secret : string end) :
 sig
   val request_token : string list -> string Lwt.t
@@ -310,6 +324,7 @@ module Parser = struct
       description : string option;
       parameters : parameter list;
       parameter_order : string list;
+      request : string option;
       response : string option;
       scopes : string list;
     }
@@ -324,10 +339,17 @@ module Parser = struct
       List.map parameter_of_json
     in
     let parameter_order = [json] |> filter_member "parameterOrder" |> flatten |> filter_string in
-    let response = None in
+    let request =
+      let l = [json] |> filter_member "request" |> filter_member "$ref" |> filter_string in
+      match l with x :: _ -> Some x | [] -> None
+    in
+    let response =
+      let l = [json] |> filter_member "response" |> filter_member "$ref" |> filter_string in
+      match l with x :: _ -> Some x | [] -> None
+    in
     let scopes = [json] |> filter_member "scopes" |> flatten |> filter_string in
     {id; name; path; http_method; description; parameters; parameter_order;
-     response; scopes}
+     request; response; scopes}
 
   type resource =
     {
@@ -380,8 +402,11 @@ module Emit = struct
     let b = Buffer.create 0 in
     for i = 0 to String.length s - 1 do
       match s.[i] with
-      | 'A' .. 'Z' as c -> Buffer.add_char b '_'; Buffer.add_char b (Char.lowercase c)
-      | c -> Buffer.add_char b c
+      | 'A' .. 'Z' as c ->
+          if i > 0 then Buffer.add_char b '_';
+          Buffer.add_char b (Char.lowercase c)
+      | c ->
+          Buffer.add_char b c
     done;
     Buffer.contents b
 
@@ -425,7 +450,7 @@ module Emit = struct
     | false ->
         begin match parameter.required, parameter.default, parameter.type_ with
           | true, _, String | false, Some _, String | false, None, String ->
-              fprintf oc "Printf.bprintf %s \"%c%s=%%s\" (urlencode %s);\n"
+              fprintf oc "Printf.bprintf %s \"%c%s=%%a\" urlencode %s;\n"
                 url first parameter.id id
           | true, _, Integer | false, Some _, Integer | false, None, Integer ->
               fprintf oc "Printf.bprintf %s \"%c%s=%%d\" %s;\n" url first parameter.id id
@@ -458,7 +483,7 @@ module Emit = struct
           parameter.id;
       match parameter.type_ with
       | String ->
-          fprintf oc "Printf.bprintf %s \"%%s\" (urlencode %s);\n"
+          fprintf oc "Printf.bprintf %s \"%%a\" urlencode %s;\n"
             url (pretty parameter.id)
       | Integer ->
           fprintf oc "Printf.bprintf %s \"%%d\" %s;\n" url (pretty parameter.id)
@@ -484,6 +509,15 @@ module Emit = struct
     in
     loop 0
 
+  let http_method method_ =
+    match method_.http_method with
+    | "GET" -> "get"
+    | "PUT" -> "put"
+    | "POST" -> "post"
+    | "DELETE" -> "delete"
+    | "PATCH" -> "patch"
+    | s -> Printf.ksprintf failwith "http_method: method not supported (%s)" s
+
   let emit_method base_url oc (method_ : method_) =
     fprintf oc "let %s %a () =\n" (pretty method_.name) emit_parameters method_.parameters;
     fprintf oc "let url = Buffer.create 0 in\n";
@@ -499,7 +533,14 @@ module Emit = struct
     emit_path_parameters method_.path "url" oc path_parameters;
     emit_query_parameters '?' "url" oc query_parameters;
     fprintf oc "let url = Buffer.contents url in\n";
-    fprintf oc "assert false\n"
+    fprintf oc "IO.bind (Http.%s url) (fun body ->\n" (http_method method_);
+    match method_.response with
+    | None ->
+        fprintf oc "IO.return ()\n)\n"
+    | Some x ->
+        fprintf oc "let json = Yojson.Basic.of_string body in\n";
+        fprintf oc "let response = %s.of_json json in\n" (String.capitalize (pretty x));
+        fprintf oc "IO.return response\n)\n"
 
   let emit_methods base_url oc methods =
     List.iter (emit_method base_url oc) methods
@@ -514,6 +555,7 @@ module Emit = struct
     List.iter (emit_resource base_url oc) resources
 
   let emit oc api =
+    fprintf oc "%s\n" prologue;
     emit_resources api.base_url oc api.resources;
     flush oc
 end
