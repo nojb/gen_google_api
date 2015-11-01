@@ -413,64 +413,109 @@ module Emit = struct
   let emit_parameters oc parameters =
     emit_separated " " emit_parameter oc parameters
 
-  let rec emit_query_parameter url id oc parameter =
+  let rec emit_query_parameter first url id oc parameter =
     match parameter.repeated with
     | true ->
         fprintf oc "if %s <> [] then begin\n" id;
-        emit_query_parameter url (sprintf "(List.hd %s)" id) oc {parameter with repeated = false};
+        emit_query_parameter first url (sprintf "(List.hd %s)" id) oc
+          {parameter with repeated = false};
         fprintf oc "List.iter (fun x ->\n";
-        emit_query_parameter url "x" oc {parameter with repeated = false};
+        emit_query_parameter '&' url "x" oc {parameter with repeated = false};
         fprintf oc ") (List.tl %s);\nend;\n" id
     | false ->
         begin match parameter.required, parameter.default, parameter.type_ with
           | true, _, String | false, Some _, String | false, None, String ->
-              fprintf oc "Printf.bprintf %s \"%s=%%s\" (urlencode %s);\n" url parameter.id id
+              fprintf oc "Printf.bprintf %s \"%c%s=%%s\" (urlencode %s);\n"
+                url first parameter.id id
           | true, _, Integer | false, Some _, Integer | false, None, Integer ->
-              fprintf oc "Printf.bprintf %s \"%s=%%d\" %s;\n" url parameter.id id
+              fprintf oc "Printf.bprintf %s \"%c%s=%%d\" %s;\n" url first parameter.id id
           | true, _, Boolean | false, Some _, Boolean | false, None, Boolean ->
-              fprintf oc "Printf.bprintf %s \"%s=%%b\" %s;\n" url parameter.id id
+              fprintf oc "Printf.bprintf %s \"%c%s=%%b\" %s;\n" url first parameter.id id
           | false, None, _ ->
               fprintf oc "(match %s with None -> () | Some x ->\n%a);\n"
-                id (emit_query_parameter url "x") {parameter with required = true}
+                id (emit_query_parameter first url "x") {parameter with required = true}
           | _ ->
               failwith "emit_query_parameter: unsupported type"
         end
 
-  let emit_query_parameters url oc parameters =
+  let emit_query_parameters first url oc parameters =
     match parameters with
     | [] -> ()
     | (x : parameter) :: xs ->
-        emit_query_parameter url (pretty x.id) oc x;
+        emit_query_parameter first url (pretty x.id) oc x;
         List.iter
           (fun (x : parameter) ->
-             fprintf oc "Buffer.add_char %s %C;\n" url '&';
-             emit_query_parameter url (pretty x.id) oc x)
+             emit_query_parameter '&' url (pretty x.id) oc x)
           xs
 
-  let emit_method oc (method_ : method_) =
-    fprintf oc "let %s %a =\n" (pretty method_.name) emit_parameters method_.parameters;
-    fprintf oc "let url = Buffer.create 0 in\n";
-    let query_parameters =
-      List.filter (function {location = "query"; _} -> true | _ -> false) method_.parameters
+  let emit_path_parameters path url oc parameters =
+    let aux parameter =
+      if parameter.repeated then
+        Printf.ksprintf failwith "emit_path_parameters: repeated not supported (%s)"
+          parameter.id;
+      if not parameter.required then
+        Printf.ksprintf failwith "emit_path_parameters: not required not supported (%s)"
+          parameter.id;
+      match parameter.type_ with
+      | String ->
+          fprintf oc "Printf.bprintf %s \"%%s\" (urlencode %s);\n"
+            url (pretty parameter.id)
+      | Integer ->
+          fprintf oc "Printf.bprintf %s \"%%d\" %s;\n" url (pretty parameter.id)
+      | Boolean ->
+          fprintf oc "Printf.bprintf %s \"%%b\" %s;\n" url (pretty parameter.id)
+      | _ ->
+          failwith "emit_query_parameter: unsupported type"
     in
-    emit_query_parameters "url" oc query_parameters;
+    let rec loop i =
+      match String.index_from path i '{' with
+      | j ->
+          if i > 0 then fprintf oc "Printf.bprintf %s %S;\n" url (String.sub path i (j-i));
+          let k = String.index_from path j '}' in
+          let id = String.sub path (j+1) (k-j-1) in
+          let parameter =
+            List.find (fun (parameter : parameter) -> parameter.id = id) parameters
+          in
+          aux parameter;
+          loop (k+1)
+      | exception Not_found ->
+          if i < String.length path then
+            fprintf oc "Printf.bprintf %s %S;\n" url (String.sub path i (String.length path - i))
+    in
+    loop 0
+
+  let emit_method base_url oc (method_ : method_) =
+    fprintf oc "let %s %a () =\n" (pretty method_.name) emit_parameters method_.parameters;
+    fprintf oc "let url = Buffer.create 0 in\n";
+    fprintf oc "Printf.bprintf url \"%s\";\n" base_url;
+    let query_parameters, path_parameters =
+      List.partition (function
+          | {location = "query"; _} -> true
+          | {location = "path"; _} -> false
+          | {location = s; _} ->
+              Printf.ksprintf failwith "emit_method: unsupported location (%s)" s
+        ) method_.parameters
+    in
+    emit_path_parameters method_.path "url" oc path_parameters;
+    emit_query_parameters '?' "url" oc query_parameters;
     fprintf oc "let url = Buffer.contents url in\n";
     fprintf oc "assert false\n"
 
-  let emit_methods oc methods =
-    List.iter (emit_method oc) methods
+  let emit_methods base_url oc methods =
+    List.iter (emit_method base_url oc) methods
 
-  let rec emit_resource oc resource =
+  let rec emit_resource base_url oc resource =
     fprintf oc "module %s = struct\n" (String.capitalize (pretty resource.id));
-    emit_methods oc resource.methods;
-    emit_resources oc resource.resources;
+    emit_methods base_url oc resource.methods;
+    emit_resources base_url oc resource.resources;
     fprintf oc "end\n"
 
-  and emit_resources oc resources =
-    List.iter (emit_resource oc) resources
+  and emit_resources base_url oc resources =
+    List.iter (emit_resource base_url oc) resources
 
   let emit oc api =
-    fprintf oc "%a%!" emit_resources api.resources
+    emit_resources api.base_url oc api.resources;
+    flush oc
 end
 
 let () =
