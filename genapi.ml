@@ -616,6 +616,7 @@ module Emit = struct
     fprintf oc "}\n"
 
   let emit_schema_of_json oc (schema : schema) =
+    let id = match schema.id with None -> "" | Some id -> id in
     match schema.type_ with
     | Some Integer ->
         fprintf oc "json |> to_int_option\n"
@@ -623,8 +624,32 @@ module Emit = struct
         fprintf oc "json |> to_string_option\n"
     | Some Boolean ->
         fprintf oc "json |> to_bool_option\n"
-    | _ ->
-        fprintf oc "XXX\n"
+    | Some Array ->
+        let items =
+          match schema.items with
+          | None ->
+              ksprintf failwith "emit_schema: 'array' schema items not given (%S)" id
+          | Some items ->
+              items
+        in
+        let s =
+          match items.ref_, items.type_ with
+          | Some x, None -> sprintf "%s.of_json" x
+          | None, Some x -> sprintf "to_%s" (simple_type x)
+          | _ -> ksprintf failwith "emit_schema: malformed items (%S)" id
+        in
+        fprintf oc "let json = json |> to_option to_list in\n";
+        fprintf oc "match json with None -> None | Some l -> Some (List.map %s l)\n" s
+    | Some Object ->
+        failwith "emit_schema_of_json: 'object' unsupported"
+    | None ->
+        let x =
+          match schema.ref_ with
+          | Some x -> x
+          | None ->
+              ksprintf failwith "emit_schema: type_ = None && ref_ = None (%S)" id
+        in
+        fprintf oc "%s.of_json json\n" x
 
   let emit_schema_module first oc (id, (schema : schema)) =
     match schema.type_ with
