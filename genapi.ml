@@ -239,49 +239,41 @@ module Parser = struct
     let type_ = json |> member "type" |> to_string_option |> option_map type_of_string in
     {ref_; type_}
 
-  type property =
+  type schema =
     {
-      id : string;
+      id : string option;
       type_ : type_ option;
-      description : string option;
-      required : string list;
       ref_ : string option;
+      required : string list;
+      description : string option;
       enum : string list;
       enum_descriptions : string list;
       format : string option;
       items : items option;
+      properties : (string * schema) list;
     }
 
-  let property_of_json (id, json) =
+  let rec schema_of_json (schema_id, json) =
+    let id = json |> member "id" |> to_string_option in
     let type_ = json |> member "type" |> to_string_option |> option_map type_of_string in
-    let description = json |> member "description" |> to_string_option in
+    let ref_ = json |> member "$ref" |> to_string_option in
     let required =
       [json] |> filter_member "annotations" |> filter_member "required" |> flatten |>
       filter_string
     in
-    let ref_ = json |> member "$ref" |> to_string_option in
+    let description = json |> member "description" |> to_string_option in
     let enum = [json] |> filter_member "enum" |> flatten |> filter_string in
     let enum_descriptions =
       [json] |> filter_member "enumDescriptions" |> flatten |> filter_string
     in
     let format = json |> member "format" |> to_string_option in
     let items = json |> member "items" |> to_option item_of_json in
-    {id; type_; description; required; ref_; enum; enum_descriptions; format; items}
-
-  type schema =
-    {
-      id : string;
-      type_ : type_;
-      description : string option;
-      properties : property list;
-    }
-
-  let schema_of_json (_, json) =
-    let id = json |> member "id" |> to_string in
-    let type_ = json |> member "type" |> to_string |> type_of_string in
-    let description = json |> member "description" |> to_string_option in
-    let properties = json |> member "properties" |> to_assoc |> List.map property_of_json in
-    {id; type_; description; properties}
+    let properties =
+      [json] |> filter_member "properties" |> List.map to_assoc |> List.flatten |>
+      List.map schema_of_json
+    in
+    schema_id,
+    {id; type_; description; required; ref_; enum; enum_descriptions; format; items; properties}
 
   type scope =
     {
@@ -375,7 +367,7 @@ module Parser = struct
       version : string;
       base_url : string;
       scopes : scope list;
-      schemas : schema list;
+      schemas : (string * schema) list;
       resources : resource list;
     }
 
@@ -388,7 +380,7 @@ module Parser = struct
       json |> member "auth" |> member "oauth2" |> member "scopes" |> to_assoc |>
       List.map scope_of_json
     in
-    let schemas = if false then json |> member "schemas" |> to_assoc |> List.map schema_of_json else [] in
+    let schemas = json |> member "schemas" |> to_assoc |> List.map schema_of_json in
     let resources = json |> member "resources" |> to_assoc |> List.map resource_of_json in
     {name; version; base_url; scopes; schemas; resources}
 
@@ -408,7 +400,9 @@ module Emit = struct
       | c ->
           Buffer.add_char b c
     done;
-    Buffer.contents b
+    match Buffer.contents b with
+    | "type" -> "type_"
+    | s -> s
 
   let emit_separated sep f oc l =
     match l with
@@ -420,7 +414,7 @@ module Emit = struct
     | String, _ -> fprintf oc "%S" s
     | Boolean, ("true" | "false") -> fprintf oc "%s" s
     | Integer, _ -> fprintf oc "%d" (int_of_string s)
-    | _ -> Printf.ksprintf failwith "emit_value: not supported (%S)" s
+    | _ -> ksprintf failwith "emit_value: not supported (%S)" s
 
   let emit_parameter oc parameter =
     match parameter with
@@ -476,10 +470,10 @@ module Emit = struct
   let emit_path_parameters path url oc parameters =
     let aux parameter =
       if parameter.repeated then
-        Printf.ksprintf failwith "emit_path_parameters: repeated not supported (%s)"
+        ksprintf failwith "emit_path_parameters: repeated not supported (%s)"
           parameter.id;
       if not parameter.required then
-        Printf.ksprintf failwith "emit_path_parameters: not required not supported (%s)"
+        ksprintf failwith "emit_path_parameters: not required not supported (%s)"
           parameter.id;
       match parameter.type_ with
       | String ->
@@ -516,7 +510,7 @@ module Emit = struct
     | "POST" -> "post"
     | "DELETE" -> "delete"
     | "PATCH" -> "patch"
-    | s -> Printf.ksprintf failwith "http_method: method not supported (%s)" s
+    | s -> ksprintf failwith "http_method: method not supported (%s)" s
 
   let emit_method base_url oc (method_ : method_) =
     fprintf oc "let %s %a () =\n" (pretty method_.name) emit_parameters method_.parameters;
@@ -527,7 +521,7 @@ module Emit = struct
           | {location = "query"; _} -> true
           | {location = "path"; _} -> false
           | {location = s; _} ->
-              Printf.ksprintf failwith "emit_method: unsupported location (%s)" s
+              ksprintf failwith "emit_method: unsupported location (%s)" s
         ) method_.parameters
     in
     emit_path_parameters method_.path "url" oc path_parameters;
@@ -554,9 +548,71 @@ module Emit = struct
   and emit_resources base_url oc resources =
     List.iter (emit_resource base_url oc) resources
 
+  let simple_type = function
+    | Integer -> "int"
+    | Boolean -> "bool"
+    | String -> "string"
+    | _ -> failwith "simple_type: not a simple type"
+
+  let rec emit_schema_property oc (id, schema) =
+    fprintf oc "%s : %a option;\n" (pretty id) emit_schema schema
+
+  and emit_schema_properties oc properties =
+    List.iter (emit_schema_property oc) properties
+
+  and emit_schema oc (schema : schema) =
+    let id = match schema.id with None -> "" | Some id -> id in
+    match schema.type_ with
+    | Some Integer ->
+        fprintf oc "int"
+    | Some String ->
+        fprintf oc "string"
+    | Some Boolean ->
+        fprintf oc "bool"
+    | Some Array ->
+        let items =
+          match schema.items with
+          | None ->
+              ksprintf failwith "emit_schema: 'array' schema items not given (%S)" id
+          | Some items ->
+              items
+        in
+        let s =
+          match items.ref_, items.type_ with
+          | Some x, None -> pretty x
+          | None, Some x -> simple_type x
+          | _ -> ksprintf failwith "emit_schema: malformed items (%S)" id
+        in
+        fprintf oc "%s list" s
+    | Some Object ->
+        fprintf oc "{\n%a}\n" emit_schema_properties schema.properties
+    | None ->
+        let x =
+          match schema.ref_ with
+          | Some x -> x
+          | None ->
+              ksprintf failwith "emit_schema: type_ = None && ref_ = None (%S)" id
+        in
+        fprintf oc "%s" (pretty x)
+
+  let emit_schemas oc schemas =
+    let aux = function
+      | [] -> ()
+      | (id, x) :: xs ->
+          fprintf oc "type %s =\n%a" (pretty id) emit_schema x;
+          List.iter (fun (id, x) -> fprintf oc "and %s =\n%a" (pretty id) emit_schema x) xs
+    in
+    aux schemas
+    (* List.iter (emit_schema oc) schemas *)
+
   let emit oc api =
     fprintf oc "%s\n" prologue;
+    fprintf oc "module %s = struct\n" (String.capitalize (pretty api.name));
+    fprintf oc "module %s = struct\n" (String.capitalize (pretty api.version));
+    emit_schemas oc api.schemas;
     emit_resources api.base_url oc api.resources;
+    fprintf oc "end\n";
+    fprintf oc "end\n";
     flush oc
 end
 
