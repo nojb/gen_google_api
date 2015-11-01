@@ -566,7 +566,16 @@ module Emit = struct
     | Some Integer ->
         fprintf oc "int"
     | Some String ->
-        fprintf oc "string"
+        begin match schema.enum with
+          | [] ->
+              fprintf oc "string"
+          | _ :: _ ->
+              fprintf oc "[\n";
+              List.iter (fun s ->
+                  fprintf oc "| `%s\n" (String.capitalize (pretty s))
+                ) schema.enum;
+              fprintf oc "]"
+        end
     | Some Boolean ->
         fprintf oc "bool"
     | Some Array ->
@@ -621,7 +630,17 @@ module Emit = struct
     | Some Integer ->
         fprintf oc "json |> to_int_option\n"
     | Some String ->
-        fprintf oc "json |> to_string_option\n"
+        begin match schema.enum with
+          | [] ->
+              fprintf oc "json |> to_string_option\n"
+          | _ :: _ ->
+              fprintf oc "match json |> to_string_option with\n";
+              List.iter (fun s ->
+                  fprintf oc "| Some %S -> Some `%s\n" s (String.capitalize (pretty s))
+                ) schema.enum;
+              fprintf oc "| None -> None\n";
+              fprintf oc "| Some s -> invalid_arg (%S ^ s)\n" "unrecognized enum: "
+        end
     | Some Boolean ->
         fprintf oc "json |> to_bool_option\n"
     | Some Array ->
