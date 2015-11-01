@@ -96,24 +96,24 @@ end = struct
     end
 end
 
+let urlencode s =
+  let b = Buffer.create 0 in
+  for i = 0 to String.length s - 1 do
+    match s.[i] with
+    | ' ' -> Buffer.add_string b "%20"
+    | '!' -> Buffer.add_string b "%21"
+    | '"' -> Buffer.add_string b "%22"
+    | '.' -> Buffer.add_string b "%2E"
+    | '/' -> Buffer.add_string b "%2F"
+    | ':' -> Buffer.add_string b "%3A"
+    | c -> Buffer.add_char b c
+  done;
+  Buffer.contents b
+
 module Auth (C : sig val client_id : string val client_secret : string end) :
 sig
   val request_token : string list -> string Lwt.t
 end = struct
-  let urlencode s =
-    let b = Buffer.create 0 in
-    for i = 0 to String.length s - 1 do
-      match s.[i] with
-      | ' ' -> Buffer.add_string b "%20"
-      | '!' -> Buffer.add_string b "%21"
-      | '"' -> Buffer.add_string b "%22"
-      | '.' -> Buffer.add_string b "%2E"
-      | '/' -> Buffer.add_string b "%2F"
-      | ':' -> Buffer.add_string b "%3A"
-      | c -> Buffer.add_char b c
-    done;
-    Buffer.contents b
-
   let redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
 
   let request_token scopes =
@@ -286,6 +286,7 @@ module Parser = struct
       description : string;
       default : string option;
       required : bool;
+      repeated : bool;
       location : string;
     }
 
@@ -295,8 +296,10 @@ module Parser = struct
     let default = json |> member "default" |> to_string_option in
     let required = json |> member "required" |> to_bool_option in
     let required = match required with Some b -> b | None -> false in
+    let repeated = json |> member "repeated" |> to_bool_option in
+    let repeated = match repeated with Some b -> b | None -> false in
     let location = json |> member "location" |> to_string in
-    {id; type_; description; default; required; location}
+    {id; type_; description; default; required; repeated; location}
 
   type method_ =
     {
@@ -382,25 +385,76 @@ module Emit = struct
     done;
     Buffer.contents b
 
-  let emit_separated f oc l =
+  let emit_separated sep f oc l =
     match l with
     | [] -> ()
-    | x :: xs -> f oc x; List.iter (fun x -> fprintf oc " %a" f x) xs
+    | x :: xs -> f oc x; List.iter (fun x -> fprintf oc "%s%a" sep f x) xs
+
+  let emit_value type_ oc s =
+    match type_, s with
+    | String, _ -> fprintf oc "%S" s
+    | Boolean, ("true" | "false") -> fprintf oc "%s" s
+    | Integer, _ -> fprintf oc "%d" (int_of_string s)
+    | _ -> Printf.ksprintf failwith "emit_value: not supported (%S)" s
 
   let emit_parameter oc parameter =
-    match parameter.required, parameter.default with
-    | false, None ->
+    match parameter.required, parameter.default, parameter.repeated with
+    | false, None, true ->
+        fprintf oc "?(%s = [])" (pretty parameter.id)
+    | _, Some _, true ->
+        failwith "emit_parameter: repeated parameter with supported characteristics"
+    | false, None, false ->
         fprintf oc "?%s" (pretty parameter.id)
-    | true, None ->
+    | true, None, _ ->
         fprintf oc "~%s" (pretty parameter.id)
-    | _, Some s ->
-        fprintf oc "?(%s = %S)" (pretty parameter.id) s
+    | _, Some s, false ->
+        fprintf oc "?(%s = %a)" (pretty parameter.id) (emit_value parameter.type_) s
 
   let emit_parameters oc parameters =
-    emit_separated emit_parameter oc parameters
+    emit_separated " " emit_parameter oc parameters
+
+  let rec emit_query_parameter url id oc parameter =
+    match parameter.repeated with
+    | true ->
+        fprintf oc "if %s <> [] then begin\n" id;
+        emit_query_parameter url (sprintf "(List.hd %s)" id) oc {parameter with repeated = false};
+        fprintf oc "List.iter (fun x ->\n";
+        emit_query_parameter url "x" oc {parameter with repeated = false};
+        fprintf oc ") (List.tl %s);\nend;\n" id
+    | false ->
+        begin match parameter.required, parameter.default, parameter.type_ with
+          | true, _, String | false, Some _, String | false, None, String ->
+              fprintf oc "Printf.bprintf %s \"%s=%%s\" (urlencode %s);\n" url parameter.id id
+          | true, _, Integer | false, Some _, Integer | false, None, Integer ->
+              fprintf oc "Printf.bprintf %s \"%s=%%d\" %s;\n" url parameter.id id
+          | true, _, Boolean | false, Some _, Boolean | false, None, Boolean ->
+              fprintf oc "Printf.bprintf %s \"%s=%%b\" %s;\n" url parameter.id id
+          | false, None, _ ->
+              fprintf oc "(match %s with None -> () | Some x ->\n%a);\n"
+                id (emit_query_parameter url "x") {parameter with required = true}
+          | _ ->
+              failwith "emit_query_parameter: unsupported type"
+        end
+
+  let emit_query_parameters url oc parameters =
+    match parameters with
+    | [] -> ()
+    | (x : parameter) :: xs ->
+        emit_query_parameter url (pretty x.id) oc x;
+        List.iter
+          (fun (x : parameter) ->
+             fprintf oc "Buffer.add_char %s %C;\n" url '&';
+             emit_query_parameter url (pretty x.id) oc x)
+          xs
 
   let emit_method oc (method_ : method_) =
     fprintf oc "let %s %a =\n" (pretty method_.name) emit_parameters method_.parameters;
+    fprintf oc "let url = Buffer.create 0 in\n";
+    let query_parameters =
+      List.filter (function {location = "query"; _} -> true | _ -> false) method_.parameters
+    in
+    emit_query_parameters "url" oc query_parameters;
+    fprintf oc "let url = Buffer.contents url in\n";
     fprintf oc "assert false\n"
 
   let emit_methods oc methods =
