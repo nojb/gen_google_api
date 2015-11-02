@@ -426,6 +426,41 @@ module Emit = struct
     | _ ->
         ()
 
+  let rec emit_schema_to_json f oc schema =
+    match schema.type_descr with
+    | Integer _ ->
+        fprintf oc "`Int %t" f
+    | String _ ->
+        fprintf oc "`String %t" f
+    | Enum enum ->
+        fprintf oc "match %t with\n" f;
+        List.iter (fun (s, _) ->
+            fprintf oc "| `%s -> %S\n" (String.capitalize (pretty s)) s
+          ) enum
+    | Boolean ->
+        fprintf oc "`Bool %t" f
+    | Array items ->
+        fprintf oc "`Array (List.map (fun x -> %a) %t)"
+          (emit_schema_to_json (fun oc -> fprintf oc "x"))
+          items f
+    | Ref ref_ ->
+        fprintf oc "%s.to_json %t" ref_ f
+    | Object properties ->
+        let aux f oc schema =
+          fprintf oc "match %t with\n" f;
+          fprintf oc "| None -> `Null\n";
+          fprintf oc "| Some x ->\n%a"
+            (emit_schema_to_json (fun oc -> fprintf oc "x")) schema
+        in
+        fprintf oc "`Assoc\n";
+        fprintf oc "[\n";
+        List.iter (fun (key, schema) ->
+            fprintf oc "(%S, %a);\n" key
+              (aux (fun oc -> fprintf oc "%t.%s" f (pretty key)))
+              schema
+          ) properties;
+        fprintf oc "]\n"
+
   let rec emit_schema_of_json oc schema =
     match schema.type_descr with
     | Integer _ ->
@@ -472,6 +507,8 @@ module Emit = struct
         fprintf oc "open Yojson.Basic.Util\n";
         fprintf oc "let of_json json =\n";
         fprintf oc "json |> %a\n" emit_schema_of_json schema;
+        fprintf oc "let to_json (x : t) =\n";
+        fprintf oc "%a\n" (emit_schema_to_json (fun oc -> fprintf oc "x")) schema;
         fprintf oc "end\n"
     | _ ->
         assert false
