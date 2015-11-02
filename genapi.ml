@@ -101,7 +101,6 @@ module Parser = struct
 
   type method_ =
     {
-      name : string;
       id : string;
       path : string;
       http_method : string;
@@ -113,7 +112,7 @@ module Parser = struct
       scopes : string list;
     }
 
-  let method_of_json (name, json) =
+  let method_of_json json =
     let id = json |> member "id" |> to_string in
     let path = json |> member "path" |> to_string in
     let http_method = json |> member "httpMethod" |> to_string in
@@ -132,20 +131,20 @@ module Parser = struct
       match l with x :: _ -> Some x | [] -> None
     in
     let scopes = [json] |> filter_member "scopes" |> flatten |> filter_string in
-    {id; name; path; http_method; description; parameters; parameter_order;
+    {id; path; http_method; description; parameters; parameter_order;
      request; response; scopes}
 
   type resource =
     {
       id : string;
-      methods : method_ list;
+      methods : (string * method_) list;
       resources : resource list;
     }
 
   let rec resource_of_json (id, json) =
     let methods =
       [json] |> filter_member "methods" |> List.map to_assoc |> List.flatten |>
-      List.map method_of_json
+      List.map (fun (key, json) -> key, method_of_json json)
     in
     let resources =
       [json] |> filter_member "resources" |> List.map to_assoc |> List.flatten |>
@@ -311,8 +310,8 @@ module Emit = struct
     | "PATCH" -> "patch"
     | s -> ksprintf failwith "http_method: method not supported (%s)" s
 
-  let emit_method base_url oc (method_ : method_) =
-    fprintf oc "let %s ?(token = \"\") %a () =\n" (pretty method_.name) emit_parameters method_.parameters;
+  let emit_method base_url oc (key, method_) =
+    fprintf oc "let %s ?(token = \"\") %a () =\n" (pretty key) emit_parameters method_.parameters;
     fprintf oc "let url = Buffer.create 0 in\n";
     fprintf oc "Printf.bprintf url \"%s\";\n" base_url;
     let query_parameters, path_parameters =
