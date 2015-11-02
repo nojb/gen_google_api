@@ -299,7 +299,7 @@ module Emit = struct
         ksprintf failwith "emit_path_parameters: not required not supported (%s)" key;
       match parameter.type_descr with
       | String _ ->
-          fprintf oc "Printf.bprintf %s \"%%a\" urlencode %s;\n" url (pretty key)
+          fprintf oc "Printf.bprintf %s \"%%s\" %s;\n" url (pretty key)
       | Integer _ ->
           fprintf oc "Printf.bprintf %s \"%%d\" %s;\n" url (pretty key)
       | Boolean ->
@@ -435,12 +435,12 @@ module Emit = struct
     | Enum enum ->
         fprintf oc "match %t with\n" f;
         List.iter (fun (s, _) ->
-            fprintf oc "| `%s -> %S\n" (String.capitalize (pretty s)) s
+            fprintf oc "| `%s -> `String %S\n" (String.capitalize (pretty s)) s
           ) enum
     | Boolean ->
         fprintf oc "`Bool %t" f
     | Array items ->
-        fprintf oc "`Array (List.map (fun x -> %a) %t)"
+        fprintf oc "`List (List.map (fun x -> %a) %t)"
           (emit_schema_to_json (fun oc -> fprintf oc "x"))
           items f
     | Ref ref_ ->
@@ -499,6 +499,7 @@ module Emit = struct
         emit_schema_constructor_sig oc schema;
         List.iter (emit_schema_getter_sig oc) properties;
         fprintf oc "val of_json: Yojson.Basic.json -> t\n";
+        fprintf oc "val to_json: t -> Yojson.Basic.json\n";
         fprintf oc "end = struct\n";
         fprintf oc "type t =\n";
         emit_schema_type oc schema;
