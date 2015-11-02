@@ -1,7 +1,7 @@
 OCAMLBUILD = ocamlbuild -classic-display -use-ocamlfind
 
 gen_google_api:
-	$(OCAMLBUILD) genapi.byte
+	$(OCAMLBUILD) gen_google_api.byte
 
 test:
 	$(OCAMLBUILD) test.byte
