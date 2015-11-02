@@ -369,14 +369,8 @@ module Emit = struct
   and emit_resources base_url oc resources =
     List.iter (emit_resource base_url oc) resources
 
-  let simple_type = function
-    | Integer _ -> "int"
-    | Boolean -> "bool"
-    | String _ -> "string"
-    | _ -> failwith "simple_type: not a simple type"
-
-  let rec emit_schema_property oc (id, schema) =
-    fprintf oc "%s : %a option;\n" (pretty id) emit_schema_type schema
+  let rec emit_schema_property oc (key, schema) =
+    fprintf oc "%s : %a option;\n" (pretty key) emit_schema_type schema
 
   and emit_schema_properties oc properties =
     List.iter (emit_schema_property oc) properties
