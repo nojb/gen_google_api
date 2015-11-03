@@ -1,4 +1,5 @@
 true: debug
 true: bin_annot
+true: safe_string
 true: package(yojson), package(unix)
 <gmail.*> or <test.*>: package(cohttp.lwt)
