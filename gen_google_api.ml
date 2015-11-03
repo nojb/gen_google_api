@@ -41,6 +41,7 @@ module Parser = struct
     | Object of (string * schema) list
     | String of string option
     | Integer of string option
+    | Number
     | Array of schema
     | Boolean
     | Ref of string
@@ -69,6 +70,8 @@ module Parser = struct
           Boolean
       | Some "integer", _ ->
           Integer format
+      | Some "number", _ ->
+          Number
       | Some "string", _ ->
           let enum = [json] |> filter_member "enum" |> flatten |> filter_string in
           let enum_descriptions =
@@ -378,6 +381,8 @@ module Emit = struct
     match schema.type_descr with
     | Integer _ ->
         fprintf oc "int"
+    | Number ->
+        fprintf oc "float"
     | String _ ->
         fprintf oc "string"
     | Enum enum ->
@@ -429,6 +434,8 @@ module Emit = struct
     match schema.type_descr with
     | Integer _ ->
         fprintf oc "`Int %t" f
+    | Number ->
+        fprintf oc "`Float %t" f
     | String _ ->
         fprintf oc "`String %t" f
     | Enum enum ->
@@ -464,6 +471,8 @@ module Emit = struct
     match schema.type_descr with
     | Integer _ ->
         fprintf oc "to_int"
+    | Number ->
+        fprintf oc "to_number"
     | String _ ->
         fprintf oc "to_string"
     | Enum enum ->
