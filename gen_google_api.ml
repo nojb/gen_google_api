@@ -82,7 +82,7 @@ module Parser = struct
           let items = json |> member "items" |> to_option schema_of_json in
           begin match items with
           | Some items -> Array items
-          | None -> failwith "array"
+          | None -> failwith "schema_of_json: no array item schema"
           end
       | Some "object", _ ->
           let properties =
@@ -90,12 +90,12 @@ module Parser = struct
             List.map (fun (key, json) -> key, schema_of_json json)
           in
           Object properties
-      | Some _, _ ->
-          failwith "unrecognized type"
+      | Some s, _ ->
+          Printf.ksprintf failwith "schema_of_json: unrecognized type (%s)" s
       | None, Some s ->
           Ref s
       | None, None ->
-          failwith "no schema type"
+          failwith "schema_of_json: no schema type"
     in
     let description = json |> member "description" |> to_string_option in
     let default = json |> member "default" |> to_string_option in
