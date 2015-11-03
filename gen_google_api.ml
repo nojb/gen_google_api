@@ -571,34 +571,43 @@ let list_apis () =
   print_endline json
 
 let main () =
-  let api = ref "" in
-  let version = ref "" in
+  let api = ref None in
+  let version = ref None in
   let list = ref false in
   let show = ref false in
+  let gen = ref false in
   let spec =
     Arg.align
       [
-        "-api", Arg.Set_string api, " Which Google API to download";
-        "-version", Arg.Set_string version, " Which API version to download";
+        "-api", Arg.String (fun s -> api := Some s), " Which Google API to download";
+        "-version", Arg.String (fun s -> version := Some s), " Which API version to download";
         "-list", Arg.Set list, " List available APIs";
         "-show", Arg.Set show, " Dump raw API JSON";
+        "-gen", Arg.Set gen, " Generate OCaml code";
       ]
   in
   let usage_msg = "Automatic Google APIs for OCaml" in
   Arg.parse spec (fun _ -> ()) usage_msg;
-  if !list then list_apis ()
-  else
-    let api = !api in
-    let version = !version in
-    if api <> "" && version <> "" then
-      if !show then
-        let json = get_api_json ~api ~version in
-        print_endline json
-      else
-        let json = get_api_json ~api ~version in
-        Parser.api_of_json (Yojson.Basic.from_string json) |> Emit.emit stdout
-    else
-      Arg.usage spec usage_msg
+  if !list then list_apis ();
+  let get_api () =
+    match !api with
+    | Some api -> api
+    | None -> failwith "Missing -api parameter"
+  in
+  let get_version () =
+    match !version with
+    | Some version -> version
+    | None -> failwith "Missing -version parameter"
+  in
+  if !show then begin
+    let json = get_api_json ~api:(get_api ()) ~version:(get_version ()) in
+    print_endline json
+  end;
+
+  if !gen then begin
+    let json = get_api_json ~api:(get_api ()) ~version:(get_version ()) in
+    Parser.api_of_json (Yojson.Basic.from_string json) |> Emit.emit stdout
+  end
 
 let () =
   try
