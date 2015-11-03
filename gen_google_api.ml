@@ -395,8 +395,10 @@ module Emit = struct
         fprintf oc "bool"
     | Array items ->
         fprintf oc "%a list" (emit_schema_type ~top:false) items
-    | Object properties ->
+    | Object properties when top ->
         fprintf oc "{\n%a}\n" emit_schema_properties properties
+    | Object _ ->
+        failwith "inline 'object' types not yet supported"
     | Ref ref_ ->
         fprintf oc "%s.t" ref_
 
@@ -545,7 +547,8 @@ let command cmd =
   let ic = Unix.open_process_in cmd in
   let buf = Buffer.create 0 in
   try
-    while true do Buffer.add_channel buf ic 4096 done; assert false
+    while true do Buffer.add_channel buf ic 4096 done;
+    assert false
   with End_of_file ->
     match Unix.close_process_in ic with
     | Unix.WEXITED 0 ->
@@ -587,4 +590,9 @@ let main () =
       Arg.usage spec usage_msg
 
 let () =
-  try main () with e -> Printf.eprintf "ERROR: %s\n" (Printexc.to_string e)
+  try
+    main ()
+  with e ->
+    flush_all ();
+    let s = match e with Failure s -> s | e -> Printexc.to_string e in
+    Printf.eprintf "\nERROR: %s.\n**Backtrace:**\n%t%!" s Printexc.print_backtrace
