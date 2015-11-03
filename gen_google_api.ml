@@ -395,10 +395,15 @@ module Emit = struct
         fprintf oc "bool"
     | Array items ->
         fprintf oc "%a list" (emit_schema_type ~top:false) items
+    | Object [] ->
+        fprintf oc "unit"
     | Object properties when top ->
         fprintf oc "{\n%a}\n" emit_schema_properties properties
-    | Object _ ->
-        failwith "inline 'object' types not yet supported"
+    | Object ((key, x) :: xs) ->
+        fprintf oc "(";
+        fprintf oc "%a (* %s *)" (emit_schema_type ~top:false) x key;
+        List.iter (fun (key, x) -> fprintf oc " * %a (* %s *)" (emit_schema_type ~top:false) x key) xs;
+        fprintf oc ")"
     | Ref ref_ ->
         fprintf oc "%s.t" ref_
 
@@ -569,12 +574,14 @@ let main () =
   let api = ref "" in
   let version = ref "" in
   let list = ref false in
+  let show = ref false in
   let spec =
     Arg.align
       [
         "-api", Arg.Set_string api, " Which Google API to download";
         "-version", Arg.Set_string version, " Which API version to download";
         "-list", Arg.Set list, " List available APIs";
+        "-show", Arg.Set show, " Dump raw API JSON";
       ]
   in
   let usage_msg = "Automatic Google APIs for OCaml" in
@@ -584,8 +591,12 @@ let main () =
     let api = !api in
     let version = !version in
     if api <> "" && version <> "" then
-      let json = get_api_json ~api ~version in
-      Parser.api_of_json (Yojson.Basic.from_string json) |> Emit.emit stdout
+      if !show then
+        let json = get_api_json ~api ~version in
+        print_endline json
+      else
+        let json = get_api_json ~api ~version in
+        Parser.api_of_json (Yojson.Basic.from_string json) |> Emit.emit stdout
     else
       Arg.usage spec usage_msg
 
