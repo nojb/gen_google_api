@@ -544,7 +544,16 @@ end
 let command cmd =
   let ic = Unix.open_process_in cmd in
   let buf = Buffer.create 0 in
-  try while true do Buffer.add_channel buf ic 4096 done; assert false with End_of_file -> Buffer.contents buf
+  try
+    while true do Buffer.add_channel buf ic 4096 done; assert false
+  with End_of_file ->
+    match Unix.close_process_in ic with
+    | Unix.WEXITED 0 ->
+        Buffer.contents buf
+    | Unix.WEXITED n ->
+        Printf.ksprintf failwith "Command %S failed with exit code %d" cmd n
+    | Unix.WSIGNALED n | Unix.WSTOPPED n ->
+        Printf.ksprintf failwith "Command %S stopped by signal %d" cmd n
 
 let get_api_json ~api ~version =
   Printf.ksprintf command "curl https://www.googleapis.com/discovery/v1/apis/%s/%s/rest" api version
@@ -578,4 +587,4 @@ let main () =
       Arg.usage spec usage_msg
 
 let () =
-  main ()
+  try main () with e -> Printf.eprintf "ERROR: %s\n" (Printexc.to_string e)
