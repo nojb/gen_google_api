@@ -183,8 +183,7 @@ module Parser = struct
       resources : resource list;
     }
 
-  let parse path =
-    let json = Yojson.Basic.from_file path in
+  let api_of_json json =
     let name = json |> member "name" |> to_string in
     let version = json |> member "version" |> to_string in
     let base_url = json |> member "baseUrl" |> to_string in
@@ -210,7 +209,7 @@ module Emit = struct
       match s.[i] with
       | 'A' .. 'Z' as c ->
           if i > 0 then Buffer.add_char b '_';
-          Buffer.add_char b (Char.lowercase c)
+          Buffer.add_char b (Char.lowercase_ascii c)
       | c ->
           Buffer.add_char b c
     done;
@@ -226,7 +225,7 @@ module Emit = struct
   let emit_value parameter oc s =
     match parameter.type_descr with
     | String _ -> fprintf oc "%S" s
-    | Enum _ -> fprintf oc "`%s" (String.capitalize (pretty s))
+    | Enum _ -> fprintf oc "`%s" (String.capitalize_ascii (pretty s))
     | Boolean -> fprintf oc "%s" s
     | Integer _ -> fprintf oc "%d" (int_of_string s)
     | _ -> ksprintf failwith "emit_value: not supported (%S)" s
@@ -270,7 +269,7 @@ module Emit = struct
             fprintf oc "Printf.bprintf %s \"%c%s=%%s\"\n" url first key;
             fprintf oc "(match %s with\n" id;
             List.iter (fun (s, _) ->
-                fprintf oc "| `%s -> %S\n" (String.capitalize (pretty s)) s
+                fprintf oc "| `%s -> %S\n" (String.capitalize_ascii (pretty s)) s
               ) enums;
             fprintf oc ");\n"
         | _ ->
@@ -361,7 +360,7 @@ module Emit = struct
     List.iter (emit_method base_url oc) methods
 
   let rec emit_resource base_url oc resource =
-    fprintf oc "module %s = struct\n" (String.capitalize (pretty resource.id));
+    fprintf oc "module %s = struct\n" (String.capitalize_ascii (pretty resource.id));
     emit_methods base_url oc resource.methods;
     emit_resources base_url oc resource.resources;
     fprintf oc "end\n"
@@ -370,12 +369,12 @@ module Emit = struct
     List.iter (emit_resource base_url oc) resources
 
   let rec emit_schema_property oc (key, schema) =
-    fprintf oc "%s : %a option;\n" (pretty key) emit_schema_type schema
+    fprintf oc "%s : %a option;\n" (pretty key) (emit_schema_type ~top:false) schema
 
   and emit_schema_properties oc properties =
     List.iter (emit_schema_property oc) properties
 
-  and emit_schema_type oc schema =
+  and emit_schema_type ~top oc schema =
     match schema.type_descr with
     | Integer _ ->
         fprintf oc "int"
@@ -384,13 +383,13 @@ module Emit = struct
     | Enum enum ->
         fprintf oc "[\n";
         List.iter (fun (s, _) ->
-            fprintf oc "| `%s\n" (String.capitalize (pretty s))
+            fprintf oc "| `%s\n" (String.capitalize_ascii (pretty s))
           ) enum;
         fprintf oc "]"
     | Boolean ->
         fprintf oc "bool"
     | Array items ->
-        fprintf oc "%a list" emit_schema_type items
+        fprintf oc "%a list" (emit_schema_type ~top:false) items
     | Object properties ->
         fprintf oc "{\n%a}\n" emit_schema_properties properties
     | Ref ref_ ->
@@ -402,13 +401,13 @@ module Emit = struct
       (pretty key) (pretty key) (sprintf "%s.%s" schema_id key)
 
   let emit_schema_getter_sig oc (key, schema) =
-    fprintf oc "val get_%s : t -> %a\n" (pretty key) emit_schema_type schema
+    fprintf oc "val get_%s : t -> %a\n" (pretty key) (emit_schema_type ~top:false) schema
 
   let emit_schema_constructor_sig oc schema =
     match schema.type_descr with
     | Object properties ->
         let aux oc (key, schema) =
-          fprintf oc " ?%s:%a ->\n" (pretty key) emit_schema_type schema
+          fprintf oc " ?%s:%a ->\n" (pretty key) (emit_schema_type ~top:false) schema
         in
         fprintf oc "val create :\n";
         fprintf oc "%a unit -> t\n" (fun oc l -> List.iter (aux oc) l) properties
@@ -435,7 +434,7 @@ module Emit = struct
     | Enum enum ->
         fprintf oc "match %t with\n" f;
         List.iter (fun (s, _) ->
-            fprintf oc "| `%s -> `String %S\n" (String.capitalize (pretty s)) s
+            fprintf oc "| `%s -> `String %S\n" (String.capitalize_ascii (pretty s)) s
           ) enum
     | Boolean ->
         fprintf oc "`Bool %t" f
@@ -470,7 +469,7 @@ module Emit = struct
     | Enum enum ->
         fprintf oc "to_string |> function\n";
         List.iter (fun (s, _) ->
-            fprintf oc "| %S -> `%s\n" s (String.capitalize (pretty s))
+            fprintf oc "| %S -> `%s\n" s (String.capitalize_ascii (pretty s))
           ) enum;
         fprintf oc "| s -> invalid_arg (%S ^ s)\n" "unrecognized enum: "
     | Boolean ->
@@ -502,7 +501,7 @@ module Emit = struct
         fprintf oc "val to_json: t -> Yojson.Basic.json\n";
         fprintf oc "end = struct\n";
         fprintf oc "type t =\n";
-        emit_schema_type oc schema;
+        emit_schema_type ~top:true oc schema;
         emit_schema_constructor oc schema;
         List.iter (emit_schema_getter key oc) properties;
         fprintf oc "open Yojson.Basic.Util\n";
@@ -526,12 +525,48 @@ module Emit = struct
   let emit oc api =
     fprintf oc "%s\n" prologue;
     fprintf oc "module %s (Http : Cohttp_lwt.Client) = struct\n"
-      (String.capitalize (pretty api.version));
+      (String.capitalize_ascii (pretty api.version));
     emit_schemas oc api.schemas;
     emit_resources api.base_url oc api.resources;
     fprintf oc "end\n";
     flush oc
 end
 
+let command cmd =
+  let ic = Unix.open_process_in cmd in
+  let buf = Buffer.create 0 in
+  try while true do Buffer.add_channel buf ic 4096 done; assert false with End_of_file -> Buffer.contents buf
+
+let get_api_json ~api ~version =
+  Printf.ksprintf command "curl https://www.googleapis.com/discovery/v1/apis/%s/%s/rest" api version
+
+let list_apis () =
+  let json = Printf.ksprintf command "curl https://www.googleapis.com/discovery/v1/apis" in
+  print_endline json
+
+let main () =
+  let api = ref "" in
+  let version = ref "" in
+  let list = ref false in
+  let spec =
+    Arg.align
+      [
+        "-api", Arg.Set_string api, " Which Google API to download";
+        "-version", Arg.Set_string version, " Which API version to download";
+        "-list", Arg.Set list, " List available APIs";
+      ]
+  in
+  let usage_msg = "Automatic Google APIs for OCaml" in
+  Arg.parse spec (fun _ -> ()) usage_msg;
+  if !list then list_apis ()
+  else
+    let api = !api in
+    let version = !version in
+    if api <> "" && version <> "" then
+      let json = get_api_json ~api ~version in
+      Parser.api_of_json (Yojson.Basic.from_string json) |> Emit.emit stdout
+    else
+      Arg.usage spec usage_msg
+
 let () =
-  Parser.parse "gmail.json" |> Emit.emit stdout
+  main ()
