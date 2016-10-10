@@ -457,19 +457,19 @@ module Emit = struct
           (emit_schema_to_json (fun oc -> fprintf oc "x"))
           items f
     | Ref ref_ ->
-        fprintf oc "%s.to_json %t" ref_ f
+        fprintf oc "%s_to_json %t" (pretty ref_) f
     | Object properties ->
         let aux f oc schema =
           fprintf oc "match %t with\n" f;
-          fprintf oc "| None -> `Null\n";
-          fprintf oc "| Some x ->\n%a"
+          fprintf oc "| exception _ -> `Null\n";
+          fprintf oc "| x -> %a"
             (emit_schema_to_json (fun oc -> fprintf oc "x")) schema
         in
         fprintf oc "`Assoc\n";
         fprintf oc "[\n";
         List.iter (fun (key, schema) ->
             fprintf oc "(%S, %a);\n" key
-              (aux (fun oc -> fprintf oc "%t.%s" f (pretty key)))
+              (aux (fun oc -> fprintf oc "%t#%s" f (pretty key)))
               schema
           ) properties;
         fprintf oc "]\n"
@@ -493,7 +493,7 @@ module Emit = struct
     | Array items ->
         fprintf oc "to_list |> List.map (%a)" emit_schema_of_json items
     | Ref ref_ ->
-        fprintf oc "%s.of_json" ref_
+        fprintf oc "%s_of_json" (pretty ref_)
     | Object properties ->
         (* fprintf oc "fun json ->\n"; *)
         (* List.iter (fun (key, schema) -> *)
@@ -502,9 +502,9 @@ module Emit = struct
         (*       key emit_schema_of_json schema; *)
         (*     fprintf oc "in\n" *)
         (*   ) properties; *)
-        fprintf oc "object\n";
+        fprintf oc "fun json -> object\n";
         List.iter (fun (key, schema) ->
-            fprintf oc "method %s = json |> member %S |> to_option (%a)\n"
+            fprintf oc "method %s = json |> member %S |> %a\n"
               (pretty key) key emit_schema_of_json schema
           ) properties;
         fprintf oc "end"
@@ -523,7 +523,7 @@ module Emit = struct
         (* emit_schema_type ~top:true oc schema; *)
         (* emit_schema_constructor oc schema; *)
         (* List.iter (emit_schema_getter key oc) properties; *)
-        fprintf oc "%s %s_of_json json =\n" first (pretty key);
+        fprintf oc "%s %s_of_json =\n" first (pretty key);
         fprintf oc "%a\n" emit_schema_of_json schema;
         fprintf oc "and %s_to_json x =\n" (pretty key);
         fprintf oc "%a\n" (emit_schema_to_json (fun oc -> fprintf oc "x")) schema
