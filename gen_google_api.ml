@@ -240,17 +240,17 @@ module Emit = struct
   let emit_parameter oc (key, parameter) =
     match parameter with
     | {required = false; default = None; repeated = true; _} ->
-        fprintf oc "?(%s = [])" (pretty key)
+        fprintf oc "?(%s = [])" (unreserve key)
     | {default = Some _; repeated = true; _} ->
         failwith "emit_parameter: repeated parameter with supported characteristics"
     | {required = false; default = None; repeated = false; _} ->
-        fprintf oc "?%s" (pretty key)
+        fprintf oc "?%s" (unreserve key)
     | {required = true; default = None; _} ->
-        fprintf oc "~%s" (pretty key)
+        fprintf oc "~%s" (unreserve key)
     | {default = Some s; repeated = false; _} ->
-        fprintf oc "?(%s = %a)" (pretty key) (emit_value parameter) s
+        fprintf oc "?(%s = %a)" (unreserve key) (emit_value parameter) s
 
-  let emit_parameters oc parameters =
+  let emit_parameters oc (parameters, _) =
     emit_separated " " emit_parameter oc parameters
 
   let rec emit_query_parameter first url id key oc parameter =
@@ -291,10 +291,10 @@ module Emit = struct
     match parameters with
     | [] -> ()
     | (key, schema) :: xs ->
-        emit_query_parameter '&' url (pretty key) key oc schema;
+        emit_query_parameter '&' url (unreserve key) key oc schema;
         List.iter
           (fun (key, schema) ->
-             emit_query_parameter '&' url (pretty key) key oc schema
+             emit_query_parameter '&' url (unreserve key) key oc schema
           ) xs
 
   let emit_path_parameters path url oc parameters =
@@ -305,11 +305,11 @@ module Emit = struct
         ksprintf failwith "emit_path_parameters: not required not supported (%s)" key;
       match parameter.type_descr with
       | String _ ->
-          fprintf oc "Printf.bprintf %s \"%%s\" %s;\n" url (pretty key)
+          fprintf oc "Printf.bprintf %s \"%%s\" %s;\n" url (unreserve key)
       | Integer _ ->
-          fprintf oc "Printf.bprintf %s \"%%d\" %s;\n" url (pretty key)
+          fprintf oc "Printf.bprintf %s \"%%d\" %s;\n" url (unreserve key)
       | Boolean ->
-          fprintf oc "Printf.bprintf %s \"%%b\" %s;\n" url (pretty key)
+          fprintf oc "Printf.bprintf %s \"%%b\" %s;\n" url (unreserve key)
       | _ ->
           failwith "emit_query_parameter: unsupported type"
     in
@@ -338,7 +338,7 @@ module Emit = struct
     | s -> ksprintf failwith "http_method: method not supported (%s)" s
 
   let emit_method base_url oc (key, method_) =
-    fprintf oc "method %s ?(token = \"\") %a () =\n" (pretty key) emit_parameters method_.parameters;
+    fprintf oc "method %s ?(token = \"\") %a () =\n" (pretty key) emit_parameters (method_.parameters, method_.request);
     fprintf oc "let url = Buffer.create 0 in\n";
     fprintf oc "Printf.bprintf url \"%s\";\n" base_url;
     let query_parameters, path_parameters =
