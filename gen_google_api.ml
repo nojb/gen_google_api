@@ -400,11 +400,6 @@ module Emit = struct
         fprintf oc "unit"
     | Object properties ->
         fprintf oc "<\n%a>\n" emit_schema_properties properties
-    (* | Object ((key, x) :: xs) -> *)
-    (*     fprintf oc "("; *)
-    (*     fprintf oc "%a (\* %s *\)" (emit_schema_type ~top:false) x key; *)
-    (*     List.iter (fun (key, x) -> fprintf oc " * %a (\* %s *\)" (emit_schema_type ~top:false) x key) xs; *)
-    (*     fprintf oc ")" *)
     | Ref ref_ ->
         fprintf oc "%s" (pretty ref_)
 
@@ -496,13 +491,6 @@ module Emit = struct
     | Ref ref_ ->
         fprintf oc "%s_of_json" (pretty ref_)
     | Object properties ->
-        (* fprintf oc "fun json ->\n"; *)
-        (* List.iter (fun (key, schema) -> *)
-        (*     fprintf oc "let %s =\n" (pretty key); *)
-        (*     fprintf oc "json |> member %S |> to_option (fun x -> x |> %a)\n" *)
-        (*       key emit_schema_of_json schema; *)
-        (*     fprintf oc "in\n" *)
-        (*   ) properties; *)
         fprintf oc "fun json -> object\n";
         List.iter (fun (key, schema) ->
             fprintf oc "method %s = json |> member %S |> %a\n"
@@ -513,17 +501,6 @@ module Emit = struct
   let emit_schema first oc (key, schema) =
     match schema.type_descr with
     | Object properties ->
-        (* fprintf oc "%s %s : sig\n" first key; *)
-        (* fprintf oc "type t\n"; *)
-        (* emit_schema_constructor_sig oc schema; *)
-        (* List.iter (emit_schema_getter_sig oc) properties; *)
-        (* fprintf oc "val of_json: Yojson.Basic.json -> t\n"; *)
-        (* fprintf oc "val to_json: t -> Yojson.Basic.json\n"; *)
-        (* fprintf oc "end = struct\n"; *)
-        (* fprintf oc "type t =\n"; *)
-        (* emit_schema_type ~top:true oc schema; *)
-        (* emit_schema_constructor oc schema; *)
-        (* List.iter (emit_schema_getter key oc) properties; *)
         fprintf oc "%s %s_of_json =\n" first (pretty key);
         fprintf oc "%a\n" emit_schema_of_json schema;
         fprintf oc "and %s_to_json x =\n" (pretty key);
