@@ -56,7 +56,7 @@ module Parser = struct
       required: bool;
       repeated: bool;
       location: string option;
-      annotations: string list;
+      annotations: string list; (* methods which require this requst/schema *)
     }
 
   let rec schema_of_json json =
@@ -250,8 +250,18 @@ module Emit = struct
     | {default = Some s; repeated = false; _} ->
         fprintf oc "?(%s = %a)" (unreserve key) (emit_value parameter) s
 
-  let emit_parameters oc (parameters, _) =
-    emit_separated " " emit_parameter oc parameters
+  let emit_parameters schemas oc (parameters, request) =
+    emit_separated " " emit_parameter oc parameters;
+    match request with
+    | None -> ()
+    | Some ref_ ->
+        let parameters =
+          match List.assoc ref_ schemas with
+          | {type_descr = Object params; _} -> params
+          | _ -> failwith "emit_parameters: not an object"
+        in
+        fprintf oc " ";
+        emit_separated " " emit_parameter oc parameters
 
   let rec emit_query_parameter first url id key oc parameter =
     match parameter.repeated, parameter.required, parameter.default with
@@ -337,8 +347,9 @@ module Emit = struct
     | "PATCH" -> "patch"
     | s -> ksprintf failwith "http_method: method not supported (%s)" s
 
-  let emit_method base_url oc (key, method_) =
-    fprintf oc "method %s ?(token = \"\") %a () =\n" (pretty key) emit_parameters (method_.parameters, method_.request);
+  let emit_method base_url schemas oc (key, method_) =
+    fprintf oc "method %s ?(token = \"\") %a () =\n"
+      (pretty key) (emit_parameters schemas) (method_.parameters, method_.request);
     fprintf oc "let url = Buffer.create 0 in\n";
     fprintf oc "Printf.bprintf url \"%s\";\n" base_url;
     let query_parameters, path_parameters =
@@ -363,17 +374,17 @@ module Emit = struct
         fprintf oc "let response = %s.of_json json in\n" x;
         fprintf oc "Lwt.return response\n"
 
-  let emit_methods base_url oc methods =
-    List.iter (emit_method base_url oc) methods
+  let emit_methods base_url schemas oc methods =
+    List.iter (emit_method base_url schemas oc) methods
 
-  let rec emit_resource base_url oc resource =
+  let rec emit_resource base_url schemas oc resource =
     fprintf oc "method %s =\nobject\n" (pretty resource.id);
-    emit_methods base_url oc resource.methods;
-    emit_resources base_url oc resource.resources;
+    emit_methods base_url schemas oc resource.methods;
+    emit_resources base_url schemas oc resource.resources;
     fprintf oc "end\n"
 
-  and emit_resources base_url oc resources =
-    List.iter (emit_resource base_url oc) resources
+  and emit_resources base_url schemas oc resources =
+    List.iter (emit_resource base_url schemas oc) resources
 
   let rec emit_schema_property oc (key, schema) =
     fprintf oc "%s: %a;\n" (pretty key) emit_schema_type schema
@@ -499,7 +510,7 @@ module Emit = struct
       (String.capitalize_ascii (pretty api.version));
     emit_schemas oc api.schemas;
     fprintf oc "let service =\nobject\n";
-    emit_resources api.base_url oc api.resources;
+    emit_resources api.base_url api.schemas oc api.resources;
     fprintf oc "end\n";
     fprintf oc "end\n";
     flush oc
