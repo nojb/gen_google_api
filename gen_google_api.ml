@@ -476,10 +476,14 @@ module Emit = struct
     | Ref ref_ ->
         fprintf oc "%s_of_json" (pretty ref_)
     | Object properties ->
-        fprintf oc "fun json -> object\n";
+        fprintf oc "fun json ->\n";
         List.iter (fun (key, schema) ->
-            fprintf oc "method %s = json |> member %S |> %a\n"
-              (pretty key) key emit_schema_of_json schema
+            fprintf oc "let %s = lazy (json |> member %S |> %a) in\n"
+              (unreserve key) key emit_schema_of_json schema
+          ) properties;
+        fprintf oc "object\n";
+        List.iter (fun (key, schema) ->
+            fprintf oc "method %s = Lazy.force %s\n" (unreserve key) (unreserve key)
           ) properties;
         fprintf oc "end"
 
