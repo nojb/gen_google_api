@@ -49,14 +49,14 @@ module Parser = struct
 
   and schema =
     {
-      id : string option;
-      type_descr : type_descr;
-      default : string option;
-      description : string option;
-      required : bool;
-      repeated : bool;
-      location : string option;
-      annotations : string list;
+      id: string option;
+      type_descr: type_descr;
+      default: string option;
+      description: string option;
+      required: bool;
+      repeated: bool;
+      location: string option;
+      annotations: string list;
     }
 
   let rec schema_of_json json =
@@ -115,8 +115,8 @@ module Parser = struct
 
   type scope =
     {
-      id : string;
-      description : string;
+      id: string;
+      description: string;
     }
 
   let scope_of_json (id, json) =
@@ -125,15 +125,15 @@ module Parser = struct
 
   type method_ =
     {
-      id : string;
-      path : string;
-      http_method : string;
-      description : string option;
-      parameters : (string * schema) list;
-      parameter_order : string list;
-      request : string option;
-      response : string option;
-      scopes : string list;
+      id: string;
+      path: string;
+      http_method: string;
+      description: string option;
+      parameters: (string * schema) list;
+      parameter_order: string list;
+      request: string option;
+      response: string option;
+      scopes: string list;
     }
 
   let method_of_json json =
@@ -160,9 +160,9 @@ module Parser = struct
 
   type resource =
     {
-      id : string;
-      methods : (string * method_) list;
-      resources : resource list;
+      id: string;
+      methods: (string * method_) list;
+      resources: resource list;
     }
 
   let rec resource_of_json (id, json) =
@@ -178,12 +178,12 @@ module Parser = struct
 
   type api =
     {
-      name : string;
-      version : string;
-      base_url : string;
-      scopes : scope list;
-      schemas : (string * schema) list;
-      resources : resource list;
+      name: string;
+      version: string;
+      base_url: string;
+      scopes: scope list;
+      schemas: (string * schema) list;
+      resources: resource list;
     }
 
   let api_of_json json =
