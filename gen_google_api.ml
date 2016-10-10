@@ -206,6 +206,12 @@ module Emit = struct
   open Printf
   open Parser
 
+  let unreserve = function
+    | "type" -> "type_"
+    | "to" -> "to_"
+    | "include" -> "include_"
+    | s -> s
+
   let pretty s =
     let b = Buffer.create 0 in
     for i = 0 to String.length s - 1 do
@@ -216,9 +222,7 @@ module Emit = struct
       | c ->
           Buffer.add_char b c
     done;
-    match Buffer.contents b with
-    | "type" -> "type_"
-    | s -> s
+    unreserve (Buffer.contents b)
 
   let emit_separated sep f oc l =
     match l with
@@ -228,7 +232,7 @@ module Emit = struct
   let emit_value parameter oc s =
     match parameter.type_descr with
     | String _ -> fprintf oc "%S" s
-    | Enum _ -> fprintf oc "`%s" (String.capitalize_ascii (pretty s))
+    | Enum _ -> fprintf oc "`%s" (unreserve s)
     | Boolean -> fprintf oc "%s" s
     | Integer _ -> fprintf oc "%d" (int_of_string s)
     | _ -> ksprintf failwith "emit_value: not supported (%S)" s
@@ -272,7 +276,7 @@ module Emit = struct
             fprintf oc "Printf.bprintf %s \"%c%s=%%s\"\n" url first key;
             fprintf oc "(match %s with\n" id;
             List.iter (fun (s, _) ->
-                fprintf oc "| `%s -> %S\n" (String.capitalize_ascii (pretty s)) s
+                fprintf oc "| `%s -> %S\n" (unreserve s) s
               ) enums;
             fprintf oc ");\n"
         | _ ->
@@ -334,7 +338,7 @@ module Emit = struct
     | s -> ksprintf failwith "http_method: method not supported (%s)" s
 
   let emit_method base_url oc (key, method_) =
-    fprintf oc "let %s ?(token = \"\") %a () =\n" (pretty key) emit_parameters method_.parameters;
+    fprintf oc "method %s ?(token = \"\") %a () =\n" (pretty key) emit_parameters method_.parameters;
     fprintf oc "let url = Buffer.create 0 in\n";
     fprintf oc "Printf.bprintf url \"%s\";\n" base_url;
     let query_parameters, path_parameters =
@@ -363,7 +367,7 @@ module Emit = struct
     List.iter (emit_method base_url oc) methods
 
   let rec emit_resource base_url oc resource =
-    fprintf oc "module %s = struct\n" (String.capitalize_ascii (pretty resource.id));
+    fprintf oc "method %s =\nobject\n" (pretty resource.id);
     emit_methods base_url oc resource.methods;
     emit_resources base_url oc resource.resources;
     fprintf oc "end\n"
@@ -389,7 +393,7 @@ module Emit = struct
         fprintf oc "[\n";
         List.iteri (fun i (s, _) ->
             if i > 0 then fprintf oc "|";
-            fprintf oc "`%s" s
+            fprintf oc "`%s" (unreserve s)
           ) enum;
         fprintf oc "]"
     | Boolean ->
@@ -403,36 +407,6 @@ module Emit = struct
     | Ref ref_ ->
         fprintf oc "%s" (pretty ref_)
 
-  let emit_schema_getter schema_id oc (key, _) =
-    fprintf oc
-      "let get_%s (x : t) =\nmatch x.%s with Some x -> x | None -> invalid_arg %S\n"
-      (pretty key) (pretty key) (sprintf "%s.%s" schema_id key)
-
-  let emit_schema_getter_sig oc (key, schema) =
-    fprintf oc "val get_%s : t -> %a\n" (pretty key) emit_schema_type schema
-
-  let emit_schema_constructor_sig oc schema =
-    match schema.type_descr with
-    | Object properties ->
-        let aux oc (key, schema) =
-          fprintf oc " ?%s:%a ->\n" (pretty key) emit_schema_type schema
-        in
-        fprintf oc "val create :\n";
-        fprintf oc "%a unit -> t\n" (fun oc l -> List.iter (aux oc) l) properties
-    | _ ->
-        ()
-
-  let emit_schema_constructor oc schema =
-    match schema.type_descr with
-    | Object properties ->
-        let aux oc (id, _) = fprintf oc " ?%s" (pretty id) in
-        fprintf oc "let create %a () =\n" (fun oc l -> List.iter (aux oc) l) properties;
-        fprintf oc "{\n";
-        List.iter (fun (id, _) -> fprintf oc "%s;\n" (pretty id)) properties;
-        fprintf oc "}\n"
-    | _ ->
-        ()
-
   let rec emit_schema_to_json f oc schema =
     match schema.type_descr with
     | Integer _ ->
@@ -444,7 +418,7 @@ module Emit = struct
     | Enum enum ->
         fprintf oc "match %t with\n" f;
         List.iter (fun (s, _) ->
-            fprintf oc "| `%s -> `String %S\n" (String.capitalize_ascii (pretty s)) s
+            fprintf oc "| `%s -> `String %S\n" (unreserve s) s
           ) enum
     | Boolean ->
         fprintf oc "`Bool %t" f
@@ -468,7 +442,7 @@ module Emit = struct
               (aux (fun oc -> fprintf oc "%t#%s" f (pretty key)))
               schema
           ) properties;
-        fprintf oc "]\n"
+        fprintf oc "]"
 
   let rec emit_schema_of_json oc schema =
     match schema.type_descr with
@@ -481,9 +455,9 @@ module Emit = struct
     | Enum enum ->
         fprintf oc "to_string |> function\n";
         List.iter (fun (s, _) ->
-            fprintf oc "| %S -> `%s\n" s (String.capitalize_ascii (pretty s))
+            fprintf oc "| %S -> `%s\n" s (unreserve s)
           ) enum;
-        fprintf oc "| s -> invalid_arg (%S ^ s)\n" "unrecognized enum: "
+        fprintf oc "| s -> invalid_arg (%S ^ s)" "unrecognized enum: "
     | Boolean ->
         fprintf oc "to_bool"
     | Array items ->
@@ -524,7 +498,9 @@ module Emit = struct
     fprintf oc "module %s (Http : Cohttp_lwt.Client) = struct\n"
       (String.capitalize_ascii (pretty api.version));
     emit_schemas oc api.schemas;
+    fprintf oc "let service =\nobject\n";
     emit_resources api.base_url oc api.resources;
+    fprintf oc "end\n";
     fprintf oc "end\n";
     flush oc
 end
