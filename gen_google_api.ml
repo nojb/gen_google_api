@@ -495,37 +495,39 @@ module Emit = struct
     | Ref ref_ ->
         fprintf oc "%s.of_json" ref_
     | Object properties ->
-        fprintf oc "fun json ->\n";
+        (* fprintf oc "fun json ->\n"; *)
+        (* List.iter (fun (key, schema) -> *)
+        (*     fprintf oc "let %s =\n" (pretty key); *)
+        (*     fprintf oc "json |> member %S |> to_option (fun x -> x |> %a)\n" *)
+        (*       key emit_schema_of_json schema; *)
+        (*     fprintf oc "in\n" *)
+        (*   ) properties; *)
+        fprintf oc "object\n";
         List.iter (fun (key, schema) ->
-            fprintf oc "let %s =\n" (pretty key);
-            fprintf oc "json |> member %S |> to_option (fun x -> x |> %a)\n"
-              key emit_schema_of_json schema;
-            fprintf oc "in\n"
+            fprintf oc "method %s = json |> member %S |> to_option (%a)\n"
+              (pretty key) key emit_schema_of_json schema
           ) properties;
-        fprintf oc "{\n";
-        List.iter (fun (key, _) -> fprintf oc "%s;\n" (pretty key)) properties;
-        fprintf oc "}"
+        fprintf oc "end"
 
-  let emit_schema_module first oc (key, schema) =
+  let emit_schema first oc (key, schema) =
     match schema.type_descr with
     | Object properties ->
-        fprintf oc "%s %s : sig\n" first key;
-        fprintf oc "type t\n";
-        emit_schema_constructor_sig oc schema;
-        List.iter (emit_schema_getter_sig oc) properties;
-        fprintf oc "val of_json: Yojson.Basic.json -> t\n";
-        fprintf oc "val to_json: t -> Yojson.Basic.json\n";
-        fprintf oc "end = struct\n";
-        fprintf oc "type t =\n";
-        emit_schema_type ~top:true oc schema;
-        emit_schema_constructor oc schema;
-        List.iter (emit_schema_getter key oc) properties;
-        fprintf oc "open Yojson.Basic.Util\n";
-        fprintf oc "let of_json json =\n";
-        fprintf oc "json |> %a\n" emit_schema_of_json schema;
-        fprintf oc "let to_json (x : t) =\n";
-        fprintf oc "%a\n" (emit_schema_to_json (fun oc -> fprintf oc "x")) schema;
-        fprintf oc "end\n"
+        (* fprintf oc "%s %s : sig\n" first key; *)
+        (* fprintf oc "type t\n"; *)
+        (* emit_schema_constructor_sig oc schema; *)
+        (* List.iter (emit_schema_getter_sig oc) properties; *)
+        (* fprintf oc "val of_json: Yojson.Basic.json -> t\n"; *)
+        (* fprintf oc "val to_json: t -> Yojson.Basic.json\n"; *)
+        (* fprintf oc "end = struct\n"; *)
+        (* fprintf oc "type t =\n"; *)
+        (* emit_schema_type ~top:true oc schema; *)
+        (* emit_schema_constructor oc schema; *)
+        (* List.iter (emit_schema_getter key oc) properties; *)
+        fprintf oc "%s %s_of_json json =\n" first (pretty key);
+        fprintf oc "%a\n" emit_schema_of_json schema;
+        fprintf oc "and %s_to_json x =\n" (pretty key);
+        fprintf oc "%a\n" (emit_schema_to_json (fun oc -> fprintf oc "x")) schema
+        (* fprintf oc "end\n" *)
     | _ ->
         assert false
 
@@ -533,8 +535,9 @@ module Emit = struct
     let aux = function
       | [] -> ()
       | x :: xs ->
-          emit_schema_module "module rec" oc x;
-          List.iter (fun x -> emit_schema_module "and" oc x) xs
+          fprintf oc "open Yojson.Basic.Util\n";
+          emit_schema "let rec" oc x;
+          List.iter (fun x -> emit_schema "and" oc x) xs
     in
     aux schemas
 
