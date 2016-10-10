@@ -372,12 +372,12 @@ module Emit = struct
     List.iter (emit_resource base_url oc) resources
 
   let rec emit_schema_property oc (key, schema) =
-    fprintf oc "%s : %a option;\n" (pretty key) (emit_schema_type ~top:false) schema
+    fprintf oc "%s: %a;\n" (pretty key) emit_schema_type schema
 
   and emit_schema_properties oc properties =
     List.iter (emit_schema_property oc) properties
 
-  and emit_schema_type ~top oc schema =
+  and emit_schema_type oc schema =
     match schema.type_descr with
     | Integer _ ->
         fprintf oc "int"
@@ -387,25 +387,26 @@ module Emit = struct
         fprintf oc "string"
     | Enum enum ->
         fprintf oc "[\n";
-        List.iter (fun (s, _) ->
-            fprintf oc "| `%s\n" (String.capitalize_ascii (pretty s))
+        List.iteri (fun i (s, _) ->
+            if i > 0 then fprintf oc "|";
+            fprintf oc "`%s" s
           ) enum;
         fprintf oc "]"
     | Boolean ->
         fprintf oc "bool"
     | Array items ->
-        fprintf oc "%a list" (emit_schema_type ~top:false) items
+        fprintf oc "%a list" emit_schema_type items
     | Object [] ->
         fprintf oc "unit"
-    | Object properties when top ->
-        fprintf oc "{\n%a}\n" emit_schema_properties properties
-    | Object ((key, x) :: xs) ->
-        fprintf oc "(";
-        fprintf oc "%a (* %s *)" (emit_schema_type ~top:false) x key;
-        List.iter (fun (key, x) -> fprintf oc " * %a (* %s *)" (emit_schema_type ~top:false) x key) xs;
-        fprintf oc ")"
+    | Object properties ->
+        fprintf oc "<\n%a>\n" emit_schema_properties properties
+    (* | Object ((key, x) :: xs) -> *)
+    (*     fprintf oc "("; *)
+    (*     fprintf oc "%a (\* %s *\)" (emit_schema_type ~top:false) x key; *)
+    (*     List.iter (fun (key, x) -> fprintf oc " * %a (\* %s *\)" (emit_schema_type ~top:false) x key) xs; *)
+    (*     fprintf oc ")" *)
     | Ref ref_ ->
-        fprintf oc "%s.t" ref_
+        fprintf oc "%s" (pretty ref_)
 
   let emit_schema_getter schema_id oc (key, _) =
     fprintf oc
@@ -413,13 +414,13 @@ module Emit = struct
       (pretty key) (pretty key) (sprintf "%s.%s" schema_id key)
 
   let emit_schema_getter_sig oc (key, schema) =
-    fprintf oc "val get_%s : t -> %a\n" (pretty key) (emit_schema_type ~top:false) schema
+    fprintf oc "val get_%s : t -> %a\n" (pretty key) emit_schema_type schema
 
   let emit_schema_constructor_sig oc schema =
     match schema.type_descr with
     | Object properties ->
         let aux oc (key, schema) =
-          fprintf oc " ?%s:%a ->\n" (pretty key) (emit_schema_type ~top:false) schema
+          fprintf oc " ?%s:%a ->\n" (pretty key) emit_schema_type schema
         in
         fprintf oc "val create :\n";
         fprintf oc "%a unit -> t\n" (fun oc l -> List.iter (aux oc) l) properties
